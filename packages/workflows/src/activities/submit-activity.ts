@@ -1,4 +1,4 @@
-import type { StateName } from "@dejsol/core";
+import type { StateName, ArtifactReference } from "@dejsol/core";
 
 /** Input for the submit activity. */
 export interface SubmitActivityInput {
@@ -19,7 +19,11 @@ export interface SubmitActivityResult {
   nextState: StateName;
   data: Record<string, unknown>;
   error?: string;
-  artifactUrls?: Record<string, string>;
+  /**
+   * Typed artifact references captured during submission (e.g. a
+   * post-click screenshot confirming the submit button was activated).
+   */
+  artifacts?: ArtifactReference[];
 }
 
 /**

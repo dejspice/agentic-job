@@ -1,4 +1,4 @@
-import type { StateName } from "@dejsol/core";
+import type { StateName, ArtifactReference } from "@dejsol/core";
 import type { StateOutcome } from "@dejsol/state-machine";
 
 /** Input for the browser activity — executes a single state machine state. */
@@ -21,8 +21,13 @@ export interface BrowserActivityResult {
   /** Updated data bag — merged into the workflow's running context. */
   data: Record<string, unknown>;
   error?: string;
-  /** Artifact URLs captured during this state (screenshots, DOM snapshots). */
-  artifactUrls?: Record<string, string>;
+  /**
+   * Typed artifact references captured during this state.
+   * Populated by the browser-worker once the artifacts have been persisted
+   * to the ArtifactStore.  The workflow accumulates these into the
+   * RunArtifactBundle carried through the execution.
+   */
+  artifacts?: ArtifactReference[];
 }
 
 /**

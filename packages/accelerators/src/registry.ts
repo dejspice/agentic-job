@@ -1,9 +1,11 @@
 import { AtsType } from "@dejsol/core";
 import type { AtsAccelerator } from "@dejsol/core";
 import { greenhouseAccelerator } from "./greenhouse/index.js";
+import { leverAccelerator } from "./lever/index.js";
 
 const registry = new Map<AtsType, AtsAccelerator>([
   [AtsType.GREENHOUSE, greenhouseAccelerator],
+  [AtsType.LEVER, leverAccelerator],
 ]);
 
 /**

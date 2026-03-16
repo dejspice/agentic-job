@@ -19,7 +19,10 @@ export {
 export {
   captureScreenshot,
   captureDomSnapshot,
+  captureAndStoreScreenshot,
+  captureAndStoreDomSnapshot,
   InMemoryArtifactStore,
+  LocalFileArtifactStore,
   type CapturedArtifact,
   type ArtifactStore,
 } from "./artifacts.js";

@@ -1,3 +1,11 @@
+// Artifact pipeline
+export {
+  emptyBundle,
+  mergeArtifacts,
+  bundleToArtifactUrls,
+  type RunArtifactBundle,
+} from "./artifacts.js";
+
 // Workflow
 export { applyWorkflow } from "./apply-workflow.js";
 export type {

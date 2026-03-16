@@ -7,6 +7,12 @@ import { StateName, RunMode, RunOutcome, TERMINAL_STATES } from "@dejsol/core";
 import type { AtsType } from "@dejsol/core";
 
 import {
+  emptyBundle,
+  mergeArtifacts,
+  type RunArtifactBundle,
+} from "./artifacts.js";
+
+import {
   reviewApprovalSignal,
   cancelRequestSignal,
 } from "./signals.js";
@@ -55,6 +61,12 @@ export interface ApplyWorkflowResult {
   finalState: StateName | null;
   statesCompleted: StateName[];
   errors: WorkflowErrorEntry[];
+  /**
+   * All artifact references captured across the run, grouped by state and
+   * ordered chronologically.  Ready for persistence into
+   * ApplyRun.artifactUrlsJson via bundleToArtifactUrls().
+   */
+  artifacts: RunArtifactBundle;
 }
 
 // --- Workflow implementation ---
@@ -81,6 +93,9 @@ export async function applyWorkflow(
   let data: Record<string, unknown> = {};
   let reviewResult: ReviewApprovalPayload | undefined;
   let cancelRequested: CancelRequestPayload | undefined;
+
+  // Accumulates all ArtifactReferences returned by activity results.
+  const bundle = emptyBundle();
 
   // --- Register signal handlers ---
   setHandler(reviewApprovalSignal, (payload: ReviewApprovalPayload) => {
@@ -126,7 +141,7 @@ export async function applyWorkflow(
       message: initResult.error ?? "Init failed",
       timestamp: new Date().toISOString(),
     });
-    return buildResult(RunOutcome.FAILED, StateName.INIT, statesCompleted, errors);
+    return buildResult(RunOutcome.FAILED, StateName.INIT, statesCompleted, errors, bundle);
   }
 
   data = { ...data, ...initResult.data };
@@ -153,6 +168,7 @@ export async function applyWorkflow(
 
     statesCompleted.push(currentState);
     data = { ...data, ...browserResult.data };
+    mergeArtifacts(bundle, browserResult.artifacts ?? [], currentState);
 
     if (browserResult.outcome === "escalated") {
       currentState = StateName.ESCALATE;
@@ -164,7 +180,7 @@ export async function applyWorkflow(
           timestamp: new Date().toISOString(),
         });
       }
-      return buildResult(RunOutcome.ESCALATED, currentState, statesCompleted, errors);
+      return buildResult(RunOutcome.ESCALATED, currentState, statesCompleted, errors, bundle);
     }
 
     if (browserResult.outcome === "failure") {
@@ -174,7 +190,7 @@ export async function applyWorkflow(
         timestamp: new Date().toISOString(),
       });
       phase = "failed";
-      return buildResult(RunOutcome.FAILED, currentState, statesCompleted, errors);
+      return buildResult(RunOutcome.FAILED, currentState, statesCompleted, errors, bundle);
     }
 
     currentState = browserResult.nextState;
@@ -183,19 +199,19 @@ export async function applyWorkflow(
   // Handle cancellation during browser loop
   if (cancelRequested) {
     phase = "cancelled";
-    return buildResult(RunOutcome.CANCELLED, currentState, statesCompleted, errors);
+    return buildResult(RunOutcome.CANCELLED, currentState, statesCompleted, errors, bundle);
   }
 
   // Handle escalation exit
   if (currentState === StateName.ESCALATE) {
     phase = "escalated";
-    return buildResult(RunOutcome.ESCALATED, currentState, statesCompleted, errors);
+    return buildResult(RunOutcome.ESCALATED, currentState, statesCompleted, errors, bundle);
   }
 
   // Handle terminal state reached (e.g. CAPTURE_CONFIRMATION without going through SUBMIT)
   if (currentState !== null && TERMINAL_STATES.has(currentState) && currentState !== StateName.CAPTURE_CONFIRMATION) {
     phase = "completed";
-    return buildResult(RunOutcome.FAILED, currentState, statesCompleted, errors);
+    return buildResult(RunOutcome.FAILED, currentState, statesCompleted, errors, bundle);
   }
 
   // --- Phase 3: Review gate (REVIEW_BEFORE_SUBMIT mode) ---
@@ -209,12 +225,12 @@ export async function applyWorkflow(
 
     if (cancelRequested) {
       phase = "cancelled";
-      return buildResult(RunOutcome.CANCELLED, currentState, statesCompleted, errors);
+      return buildResult(RunOutcome.CANCELLED, currentState, statesCompleted, errors, bundle);
     }
 
     if (reviewTimedOut || !reviewResult?.approved) {
       phase = "cancelled";
-      return buildResult(RunOutcome.CANCELLED, currentState, statesCompleted, errors);
+      return buildResult(RunOutcome.CANCELLED, currentState, statesCompleted, errors, bundle);
     }
   }
 
@@ -233,6 +249,7 @@ export async function applyWorkflow(
 
     statesCompleted.push(StateName.SUBMIT);
     data = { ...data, ...submitResult.data };
+    mergeArtifacts(bundle, submitResult.artifacts ?? [], StateName.SUBMIT);
 
     if (!submitResult.success) {
       phase = "failed";
@@ -241,7 +258,7 @@ export async function applyWorkflow(
         message: submitResult.error ?? "Submit failed",
         timestamp: new Date().toISOString(),
       });
-      return buildResult(RunOutcome.FAILED, StateName.SUBMIT, statesCompleted, errors);
+      return buildResult(RunOutcome.FAILED, StateName.SUBMIT, statesCompleted, errors, bundle);
     }
 
     currentState = submitResult.nextState;
@@ -260,6 +277,7 @@ export async function applyWorkflow(
     });
 
     statesCompleted.push(StateName.CAPTURE_CONFIRMATION);
+    mergeArtifacts(bundle, captureResult.artifacts ?? [], StateName.CAPTURE_CONFIRMATION);
 
     if (!captureResult.success) {
       phase = "failed";
@@ -268,7 +286,7 @@ export async function applyWorkflow(
         message: captureResult.error ?? "Capture failed",
         timestamp: new Date().toISOString(),
       });
-      return buildResult(RunOutcome.FAILED, StateName.CAPTURE_CONFIRMATION, statesCompleted, errors);
+      return buildResult(RunOutcome.FAILED, StateName.CAPTURE_CONFIRMATION, statesCompleted, errors, bundle);
     }
 
     phase = "completed";
@@ -277,13 +295,14 @@ export async function applyWorkflow(
       StateName.CAPTURE_CONFIRMATION,
       statesCompleted,
       errors,
+      bundle,
       captureResult.confirmationId,
     );
   }
 
   // Fallback — should not reach here in normal flow
   phase = "failed";
-  return buildResult(RunOutcome.FAILED, currentState, statesCompleted, errors);
+  return buildResult(RunOutcome.FAILED, currentState, statesCompleted, errors, bundle);
 }
 
 function buildResult(
@@ -291,6 +310,7 @@ function buildResult(
   finalState: StateName | null,
   statesCompleted: StateName[],
   errors: WorkflowErrorEntry[],
+  artifacts: RunArtifactBundle,
   confirmationId?: string,
 ): ApplyWorkflowResult {
   return {
@@ -298,6 +318,7 @@ function buildResult(
     finalState,
     statesCompleted: [...statesCompleted],
     errors: [...errors],
+    artifacts,
     ...(confirmationId !== undefined ? { confirmationId } : {}),
   };
 }

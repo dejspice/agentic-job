@@ -7,7 +7,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/apply-workflow.test.ts",
+    "typecheck:test": "tsc --project tsconfig.test.json"
   },
   "dependencies": {
     "@dejsol/core": "*",
