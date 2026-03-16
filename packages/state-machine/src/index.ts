@@ -2,6 +2,8 @@ export type { StateHandler, StateContext, StateResult, StateOutcome } from "./ty
 
 export { ApplyStateMachine } from "./state-machine.js";
 
+export { STATE_POLICIES } from "./policies.js";
+
 export {
   initState,
   openJobPageState,
