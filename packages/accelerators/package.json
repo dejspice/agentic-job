@@ -7,9 +7,14 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --require tsx/cjs --test src/__tests__/greenhouse-deterministic-resolution.test.ts",
+    "typecheck:test": "tsc --project tsconfig.test.json"
   },
   "dependencies": {
     "@dejsol/core": "*"
+  },
+  "devDependencies": {
+    "@dejsol/intelligence": "*"
   }
 }
