@@ -1,0 +1,43 @@
+import type { Page } from "playwright";
+import type { CommandResult, SelectorTarget } from "@dejsol/core";
+
+async function resolveAndClick(
+  page: Page,
+  target: SelectorTarget,
+): Promise<void> {
+  switch (target.kind) {
+    case "css":
+      await page.click(target.value);
+      break;
+    case "coordinates":
+      await page.mouse.click(target.x, target.y);
+      break;
+    case "semantic":
+      await page.getByRole("button", { name: target.label }).or(
+        page.getByRole("link", { name: target.label }),
+      ).or(
+        page.getByText(target.label),
+      ).first().click();
+      break;
+  }
+}
+
+export async function executeClick(
+  page: Page,
+  cmd: { target: SelectorTarget },
+): Promise<CommandResult> {
+  const start = performance.now();
+  try {
+    await resolveAndClick(page, cmd.target);
+    return {
+      success: true,
+      durationMs: Math.round(performance.now() - start),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Math.round(performance.now() - start),
+    };
+  }
+}
