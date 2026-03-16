@@ -1,3 +1,4 @@
+import { TrendPill } from "./TrendPill";
 import type { DashboardMetric } from "../types";
 
 interface MetricCardProps {
@@ -5,8 +6,7 @@ interface MetricCardProps {
 }
 
 export function MetricCard({ metric }: MetricCardProps) {
-  const hasDelta = metric.delta !== undefined;
-  const isPositive = (metric.delta ?? 0) >= 0;
+  const hasDelta = metric.delta !== undefined && metric.delta !== 0;
 
   return (
     <div
@@ -16,16 +16,22 @@ export function MetricCard({ metric }: MetricCardProps) {
         borderRadius: 12,
         padding: "20px 24px",
         minWidth: 180,
-        flex: "1 1 180px",
+        flex: "1 1 200px",
+        // Left accent stripe when an accent color is provided
+        borderLeft: metric.accent
+          ? `4px solid ${metric.accent}`
+          : "1px solid #e2e8f0",
+        paddingLeft: metric.accent ? 20 : 24,
       }}
     >
       <p
         style={{
           margin: 0,
-          fontSize: 13,
-          fontWeight: 500,
+          fontSize: 12,
+          fontWeight: 600,
           color: "#64748b",
-          letterSpacing: "0.01em",
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
         }}
       >
         {metric.label}
@@ -35,30 +41,42 @@ export function MetricCard({ metric }: MetricCardProps) {
         style={{
           display: "flex",
           alignItems: "baseline",
-          gap: 8,
-          marginTop: 8,
+          gap: 10,
+          marginTop: 10,
+          flexWrap: "wrap",
         }}
       >
         <span
-          style={{ fontSize: 28, fontWeight: 700, color: "#0f172a", lineHeight: 1 }}
+          style={{
+            fontSize: 30,
+            fontWeight: 700,
+            color: "#0f172a",
+            lineHeight: 1,
+            letterSpacing: "-0.02em",
+          }}
         >
           {metric.value}
         </span>
         {metric.unit && (
-          <span style={{ fontSize: 14, color: "#94a3b8" }}>{metric.unit}</span>
+          <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 500 }}>
+            {metric.unit}
+          </span>
+        )}
+        {hasDelta && (
+          <TrendPill delta={metric.delta!} invertPolarity={metric.invertDelta} />
         )}
       </div>
 
-      {hasDelta && (
+      {metric.description && (
         <p
           style={{
             margin: "8px 0 0",
             fontSize: 12,
-            fontWeight: 500,
-            color: isPositive ? "#16a34a" : "#dc2626",
+            color: "#94a3b8",
+            lineHeight: 1.4,
           }}
         >
-          {isPositive ? "▲" : "▼"} {Math.abs(metric.delta!)}% vs last period
+          {metric.description}
         </p>
       )}
     </div>

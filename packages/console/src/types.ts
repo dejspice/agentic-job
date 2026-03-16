@@ -76,6 +76,65 @@ export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
 export type RunStatus = RunOutcome | "IN_PROGRESS" | "REVIEW" | "QUEUED";
 
 // ---------------------------------------------------------------------------
+// KPI models
+// ---------------------------------------------------------------------------
+
+/** A single computed KPI value with period-over-period comparison. */
+export interface KpiValue {
+  current: number;
+  previous?: number;
+  /** Percentage change relative to previous period (+ve = increase). */
+  delta?: number;
+  /** Pre-formatted display string (e.g. "84.2%", "$4.82", "3.2 min"). */
+  formatted: string;
+}
+
+export type KpiPeriod = "24h" | "7d" | "30d";
+
+/**
+ * Full KPI snapshot for one observation period.
+ * Maps to the four architecture KPIs + supporting volume metrics.
+ */
+export interface KpiSnapshot {
+  period: KpiPeriod;
+  generatedAt: string;
+
+  // ── Primary KPIs ──────────────────────────────────────────────────────
+  /** % of completed runs that ended as SUBMITTED. */
+  successRate: KpiValue;
+  /** % of runs that required at least one human intervention (HITL). */
+  hitlRate: KpiValue;
+  /** Total estimated LLM cost in USD across all runs in the period. */
+  llmCostUsd: KpiValue;
+  /**
+   * % of form fields resolved from the answer bank / candidate profile
+   * without requiring an LLM inference call.
+   */
+  deterministicRate: KpiValue;
+
+  // ── Volume metrics ────────────────────────────────────────────────────
+  totalRuns: KpiValue;
+  submittedRuns: KpiValue;
+  failedRuns: KpiValue;
+  avgRunDurationSec: KpiValue;
+
+  // ── Queue snapshot ────────────────────────────────────────────────────
+  /** Number of runs currently waiting in the review gate. */
+  reviewPendingCount: number;
+}
+
+/** Summary statistics shown at the top of the Review Queue page. */
+export interface ReviewQueueStats {
+  totalPending: number;
+  /** Average time items have been waiting, in seconds. */
+  avgWaitSec: number;
+  /** Time the oldest item has been waiting, in seconds. */
+  oldestWaitSec: number;
+  /** Most recent item's wait time, in seconds. */
+  newestWaitSec: number;
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
 
@@ -87,6 +146,15 @@ export interface DashboardMetric {
   /** Percentage change relative to the previous period. */
   delta?: number;
   trend?: "up" | "down" | "neutral";
+  /** Brief contextual description shown below the value. */
+  description?: string;
+  /** Left-border accent color for visual differentiation. */
+  accent?: string;
+  /**
+   * When true, a negative delta is rendered green and a positive delta red.
+   * Use for metrics where lower is better (e.g. cost, failure rate, HITL rate).
+   */
+  invertDelta?: boolean;
 }
 
 // ---------------------------------------------------------------------------

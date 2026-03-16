@@ -1,72 +1,121 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Topbar } from "../components/Topbar";
 import { ReviewQueueTable } from "../components/ReviewQueueTable";
-import { RunMode, StateName } from "../types";
-import type { ReviewQueueItem, ReviewDecision } from "../types";
+import { SectionCard } from "../components/SectionCard";
+import type { ReviewQueueItem, ReviewDecision, ReviewQueueStats } from "../types";
+import { getReviewQueue, getReviewQueueStats } from "../lib/api";
 
 // ---------------------------------------------------------------------------
-// Placeholder data
+// Helpers
 // ---------------------------------------------------------------------------
 
-const MOCK_QUEUE: ReviewQueueItem[] = [
-  {
-    runId: "run-004",
-    jobId: "job-004",
-    candidateId: "cand-003",
-    company: "Umbrella LLC",
-    jobTitle: "Backend Engineer",
-    jobUrl: "https://jobs.umbrella.com/456",
-    currentState: StateName.SUBMIT,
-    mode: RunMode.REVIEW_BEFORE_SUBMIT,
-    waitingSince: new Date(Date.now() - 5_400_000).toISOString(),
-  },
-  {
-    runId: "run-005",
-    jobId: "job-005",
-    candidateId: "cand-001",
-    company: "Initech Systems",
-    jobTitle: "Staff Engineer",
-    jobUrl: "https://jobs.initech.com/789",
-    currentState: StateName.PRE_SUBMIT_CHECK,
-    mode: RunMode.REVIEW_BEFORE_SUBMIT,
-    waitingSince: new Date(Date.now() - 1_800_000).toISOString(),
-  },
-  {
-    runId: "run-006",
-    jobId: "job-006",
-    candidateId: "cand-002",
-    company: "Nakatomi Corp",
-    jobTitle: "Platform Engineer",
-    jobUrl: "https://jobs.nakatomi.com/321",
-    currentState: StateName.SUBMIT,
-    mode: RunMode.REVIEW_BEFORE_SUBMIT,
-    waitingSince: new Date(Date.now() - 300_000).toISOString(),
-  },
-];
+function formatWaitDuration(sec: number): string {
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
 
 // ---------------------------------------------------------------------------
-// Component
+// Stats mini-cards
+// ---------------------------------------------------------------------------
+
+interface QueueStatCardProps {
+  label: string;
+  value: string;
+  sub?: string;
+  color?: string;
+}
+
+function QueueStatCard({ label, value, sub, color = "#0f172a" }: QueueStatCardProps) {
+  return (
+    <div
+      style={{
+        flex: "1 1 140px",
+        background: "#ffffff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 10,
+        padding: "14px 18px",
+      }}
+    >
+      <p style={{ margin: 0, fontSize: 11, fontWeight: 600, color: "#64748b", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+        {label}
+      </p>
+      <p style={{ margin: "8px 0 0", fontSize: 22, fontWeight: 700, color, lineHeight: 1 }}>
+        {value}
+      </p>
+      {sub && (
+        <p style={{ margin: "4px 0 0", fontSize: 11, color: "#94a3b8" }}>{sub}</p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Page component
 // ---------------------------------------------------------------------------
 
 export function ReviewQueue() {
-  const [items, setItems] = useState<ReviewQueueItem[]>(MOCK_QUEUE);
+  const [items, setItems] = useState<ReviewQueueItem[]>([]);
+  const [stats, setStats] = useState<ReviewQueueStats | null>(null);
+  const [loading, setLoading] = useState(true);
   const [lastDecision, setLastDecision] = useState<{
     runId: string;
     decision: ReviewDecision;
   } | null>(null);
 
+  useEffect(() => {
+    Promise.all([getReviewQueue(), getReviewQueueStats()]).then(
+      ([queue, qstats]) => {
+        setItems(queue);
+        setStats(qstats);
+        setLoading(false);
+      },
+    );
+  }, []);
+
   function handleDecision(runId: string, decision: ReviewDecision) {
     // In production: POST /api/runs/:runId/review with the decision body.
     setLastDecision({ runId, decision });
-    // Remove from queue optimistically.
-    setItems((prev) => prev.filter((item) => item.runId !== runId));
+    setItems((prev) => {
+      const next = prev.filter((item) => item.runId !== runId);
+      // Recompute stats from the remaining items
+      if (next.length === 0) {
+        setStats({ totalPending: 0, avgWaitSec: 0, oldestWaitSec: 0, newestWaitSec: 0 });
+      } else {
+        const waits = next.map(
+          (i) => (Date.now() - new Date(i.waitingSince).getTime()) / 1000,
+        );
+        const total = waits.reduce((a, b) => a + b, 0);
+        setStats({
+          totalPending: next.length,
+          avgWaitSec: total / next.length,
+          oldestWaitSec: Math.max(...waits),
+          newestWaitSec: Math.min(...waits),
+        });
+      }
+      return next;
+    });
   }
+
+  const urgencyColor =
+    stats && stats.oldestWaitSec > 3600
+      ? "#dc2626"
+      : stats && stats.oldestWaitSec > 1800
+      ? "#d97706"
+      : "#16a34a";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
       <Topbar
         title="Review Queue"
-        subtitle={`${items.length} run${items.length !== 1 ? "s" : ""} pending human review`}
+        subtitle={
+          loading
+            ? "Loading…"
+            : `${items.length} run${items.length !== 1 ? "s" : ""} pending human review`
+        }
       />
 
       <main style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
@@ -88,23 +137,42 @@ export function ReviewQueue() {
           >
             <span>
               Run <strong>{lastDecision.runId}</strong> was{" "}
-              {lastDecision.decision.approved ? "approved" : "rejected"}.
+              {lastDecision.decision.approved ? "approved ✓" : "rejected ✕"}.
             </span>
             <button
               onClick={() => setLastDecision(null)}
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                fontSize: 16,
-                color: "inherit",
-                padding: "0 4px",
-              }}
+              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "inherit", padding: "0 4px" }}
             >
               ×
             </button>
           </div>
         )}
+
+        {/* Queue stats cards */}
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 24 }}>
+          <QueueStatCard
+            label="Total Pending"
+            value={loading ? "—" : String(stats?.totalPending ?? 0)}
+            sub="runs at review gate"
+            color={stats && stats.totalPending > 0 ? "#d97706" : "#16a34a"}
+          />
+          <QueueStatCard
+            label="Avg Wait"
+            value={loading || !stats ? "—" : formatWaitDuration(stats.avgWaitSec)}
+            sub="across all pending runs"
+          />
+          <QueueStatCard
+            label="Oldest Wait"
+            value={loading || !stats ? "—" : formatWaitDuration(stats.oldestWaitSec)}
+            sub="most urgent run"
+            color={urgencyColor}
+          />
+          <QueueStatCard
+            label="Newest Wait"
+            value={loading || !stats ? "—" : formatWaitDuration(stats.newestWaitSec)}
+            sub="most recent arrival"
+          />
+        </div>
 
         {/* Info callout */}
         <div
@@ -116,24 +184,46 @@ export function ReviewQueue() {
             fontSize: 13,
             color: "#1e40af",
             marginBottom: 24,
+            lineHeight: 1.6,
           }}
         >
-          <strong>REVIEW_BEFORE_SUBMIT mode:</strong> Runs listed here are paused
-          at the review gate. Approve to proceed with submission, or reject to
-          cancel the run. Click a company name to view the full run detail.
+          <strong>REVIEW_BEFORE_SUBMIT mode:</strong> Runs listed here are
+          paused at the review gate waiting for operator sign-off. Approve to
+          proceed with form submission, or reject to cancel the run. Click a
+          company name to inspect the full run detail and form data before
+          deciding.
         </div>
 
         {/* Queue table */}
-        <div
-          style={{
-            background: "#ffffff",
-            border: "1px solid #e2e8f0",
-            borderRadius: 12,
-            overflow: "hidden",
-          }}
+        <SectionCard
+          title="Pending Review"
+          noPadding
+          headerRight={
+            stats && stats.totalPending > 0 ? (
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "#d97706",
+                  background: "#fef9c3",
+                  padding: "2px 8px",
+                  borderRadius: 99,
+                  border: "1px solid #fde68a",
+                }}
+              >
+                {stats.totalPending} waiting
+              </span>
+            ) : undefined
+          }
         >
-          <ReviewQueueTable items={items} onDecision={handleDecision} />
-        </div>
+          {loading ? (
+            <div style={{ padding: "32px 20px", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
+              Loading queue…
+            </div>
+          ) : (
+            <ReviewQueueTable items={items} onDecision={handleDecision} />
+          )}
+        </SectionCard>
       </main>
     </div>
   );

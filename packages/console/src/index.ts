@@ -9,6 +9,10 @@
 
 export type {
   DashboardMetric,
+  KpiValue,
+  KpiSnapshot,
+  KpiPeriod,
+  ReviewQueueStats,
   RunSummary,
   RunDetailView,
   ReviewQueueItem,
