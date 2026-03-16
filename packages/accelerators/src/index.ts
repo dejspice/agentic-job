@@ -25,3 +25,28 @@ export {
   getGreenhouseEdgeCase,
   type GreenhouseEdgeCase,
 } from "./greenhouse/index.js";
+
+export {
+  mapFieldDeterministic,
+  mapFields,
+  toFieldMapping,
+  inferFieldType,
+  type FieldHint,
+  type MappedField,
+  type FieldMapperFallback,
+  classifyPageDeterministic,
+  classifyPage,
+  toPageClassifier,
+  type PageSignals,
+  type ClassifiedPage,
+  type UniversalPageType,
+  type PageClassifierFallback,
+  identifyCandidates,
+  findNextAction,
+  findSubmitAction,
+  findApplyEntry,
+  findBestAction,
+  type NavigationCandidate,
+  type NavigableElement,
+  type NavigatorFallback,
+} from "./universal/index.js";
