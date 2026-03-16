@@ -10,6 +10,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@dejsol/core": "*"
+    "@dejsol/core": "*",
+    "@dejsol/state-machine": "*",
+    "@temporalio/activity": "^1.15.0",
+    "@temporalio/workflow": "^1.15.0"
   }
 }
