@@ -10,6 +10,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@dejsol/core": "*"
+    "@dejsol/core": "*",
+    "playwright": "^1.49.0"
   }
 }
