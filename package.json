@@ -12,7 +12,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "db:seed": "tsx scripts/seed.ts",
+    "db:seed": "tsx scripts/seed-db.ts",
     "build": "tsc -b",
     "clean": "rm -rf packages/*/dist *.tsbuildinfo",
     "typecheck": "tsc --noEmit"
