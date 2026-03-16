@@ -3,7 +3,7 @@ import { Topbar } from "../components/Topbar";
 import { ReviewQueueTable } from "../components/ReviewQueueTable";
 import { SectionCard } from "../components/SectionCard";
 import type { ReviewQueueItem, ReviewDecision, ReviewQueueStats } from "../types";
-import { getReviewQueue, getReviewQueueStats } from "../lib/api";
+import { getReviewQueue, getReviewQueueStats, approveRun, rejectRun } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -77,11 +77,27 @@ export function ReviewQueue() {
   }, []);
 
   function handleDecision(runId: string, decision: ReviewDecision) {
-    // In production: POST /api/runs/:runId/review with the decision body.
+    // Fire the API call; optimistic update proceeds regardless of outcome.
+    if (decision.approved) {
+      approveRun(runId, {
+        edits: decision.edits,
+        reviewerNote: decision.reviewerNote,
+      }).catch((e: Error) =>
+        console.error("[ReviewQueue] approve failed:", e.message),
+      );
+    } else {
+      rejectRun(
+        runId,
+        decision.reviewerNote ?? "Rejected by operator",
+      ).catch((e: Error) =>
+        console.error("[ReviewQueue] reject failed:", e.message),
+      );
+    }
+
+    // Optimistic UI: remove item and recompute stats immediately.
     setLastDecision({ runId, decision });
     setItems((prev) => {
       const next = prev.filter((item) => item.runId !== runId);
-      // Recompute stats from the remaining items
       if (next.length === 0) {
         setStats({ totalPending: 0, avgWaitSec: 0, oldestWaitSec: 0, newestWaitSec: 0 });
       } else {

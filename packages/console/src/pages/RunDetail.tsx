@@ -1,139 +1,11 @@
+import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Topbar } from "../components/Topbar";
 import { StatusBadge } from "../components/StatusBadge";
 import { RunTimeline } from "../components/RunTimeline";
-import { RunMode, RunOutcome, StateName } from "../types";
+import { StateName } from "../types";
 import type { RunDetailView, RunStatus } from "../types";
-
-// ---------------------------------------------------------------------------
-// Placeholder data
-// ---------------------------------------------------------------------------
-
-const MOCK_RUNS: Record<string, RunDetailView> = {
-  "run-001": {
-    id: "run-001",
-    jobId: "job-001",
-    jobTitle: "Senior Software Engineer",
-    company: "Acme Corp",
-    jobUrl: "https://jobs.acme.com/123",
-    candidateId: "cand-001",
-    mode: RunMode.REVIEW_BEFORE_SUBMIT,
-    outcome: null,
-    currentState: StateName.PRE_SUBMIT_CHECK,
-    percentComplete: 78,
-    humanInterventions: 0,
-    startedAt: new Date(Date.now() - 900_000).toISOString(),
-    completedAt: null,
-    confirmationId: null,
-    errors: [],
-    stateHistory: [
-      {
-        state: StateName.INIT,
-        enteredAt: new Date(Date.now() - 900_000).toISOString(),
-        exitedAt: new Date(Date.now() - 895_000).toISOString(),
-        outcome: "success",
-        durationMs: 5000,
-      },
-      {
-        state: StateName.OPEN_JOB_PAGE,
-        enteredAt: new Date(Date.now() - 895_000).toISOString(),
-        exitedAt: new Date(Date.now() - 880_000).toISOString(),
-        outcome: "success",
-        durationMs: 15_000,
-      },
-      {
-        state: StateName.DETECT_APPLY_ENTRY,
-        enteredAt: new Date(Date.now() - 880_000).toISOString(),
-        exitedAt: new Date(Date.now() - 870_000).toISOString(),
-        outcome: "success",
-        durationMs: 10_000,
-      },
-      {
-        state: StateName.UPLOAD_RESUME,
-        enteredAt: new Date(Date.now() - 870_000).toISOString(),
-        exitedAt: new Date(Date.now() - 840_000).toISOString(),
-        outcome: "success",
-        durationMs: 30_000,
-      },
-      {
-        state: StateName.FILL_REQUIRED_FIELDS,
-        enteredAt: new Date(Date.now() - 840_000).toISOString(),
-        exitedAt: new Date(Date.now() - 800_000).toISOString(),
-        outcome: "success",
-        durationMs: 40_000,
-      },
-      {
-        state: StateName.PRE_SUBMIT_CHECK,
-        enteredAt: new Date(Date.now() - 800_000).toISOString(),
-        outcome: "success",
-        durationMs: undefined,
-      },
-    ],
-    artifacts: {
-      screenshots: {
-        PRE_SUBMIT_CHECK: "https://storage.example.com/run-001/pre-submit.png",
-      },
-    },
-    cost: {
-      inputTokens: 4200,
-      outputTokens: 800,
-      llmCalls: 6,
-      totalLatencyMs: 61_000,
-      estimatedCostUsd: 0.04,
-    },
-  },
-  "run-002": {
-    id: "run-002",
-    jobId: "job-002",
-    jobTitle: "Product Designer",
-    company: "Globex Inc",
-    jobUrl: "https://jobs.globex.com/456",
-    candidateId: "cand-001",
-    mode: RunMode.FULL_AUTO,
-    outcome: RunOutcome.SUBMITTED,
-    currentState: StateName.CAPTURE_CONFIRMATION,
-    percentComplete: 100,
-    humanInterventions: 0,
-    startedAt: new Date(Date.now() - 3_600_000).toISOString(),
-    completedAt: new Date(Date.now() - 3_200_000).toISOString(),
-    confirmationId: "APP-2025-78421",
-    errors: [],
-    stateHistory: [
-      {
-        state: StateName.INIT,
-        enteredAt: new Date(Date.now() - 3_600_000).toISOString(),
-        exitedAt: new Date(Date.now() - 3_595_000).toISOString(),
-        outcome: "success",
-        durationMs: 5000,
-      },
-      {
-        state: StateName.SUBMIT,
-        enteredAt: new Date(Date.now() - 3_215_000).toISOString(),
-        exitedAt: new Date(Date.now() - 3_210_000).toISOString(),
-        outcome: "success",
-        durationMs: 5000,
-      },
-      {
-        state: StateName.CAPTURE_CONFIRMATION,
-        enteredAt: new Date(Date.now() - 3_210_000).toISOString(),
-        exitedAt: new Date(Date.now() - 3_200_000).toISOString(),
-        outcome: "success",
-        durationMs: 10_000,
-      },
-    ],
-    artifacts: {
-      confirmationScreenshot:
-        "https://storage.example.com/run-002/confirmation.png",
-    },
-    cost: {
-      inputTokens: 8100,
-      outputTokens: 1400,
-      llmCalls: 11,
-      totalLatencyMs: 400_000,
-      estimatedCostUsd: 0.09,
-    },
-  },
-};
+import { getRunDetail, approveRun, rejectRun } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -151,7 +23,7 @@ function formatDate(iso: string | null) {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-sections
+// Sub-components (local to this page)
 // ---------------------------------------------------------------------------
 
 function SectionCard({
@@ -211,9 +83,51 @@ function KVRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 export function RunDetail() {
   const { runId } = useParams<{ runId: string }>();
-  const run = runId ? MOCK_RUNS[runId] : undefined;
+  const [run, setRun] = useState<RunDetailView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [deciding, setDeciding] = useState(false);
+  const [decisionBanner, setDecisionBanner] = useState<{
+    approved: boolean;
+  } | null>(null);
 
-  if (!run) {
+  useEffect(() => {
+    if (!runId) return;
+    setLoading(true);
+    setFetchError(null);
+    getRunDetail(runId)
+      .then(setRun)
+      .catch((e: Error) => setFetchError(e.message))
+      .finally(() => setLoading(false));
+  }, [runId]);
+
+  // --- Loading state ---
+  if (loading) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+        <Topbar title="Run Detail" subtitle={runId} />
+        <main style={{ flex: 1, padding: "28px" }}>
+          <div style={{ display: "flex", gap: 20 }}>
+            {[1, 2].map((i) => (
+              <div
+                key={i}
+                style={{
+                  flex: i === 1 ? 1 : undefined,
+                  width: i === 2 ? 320 : undefined,
+                  height: 280,
+                  background: "#f1f5f9",
+                  borderRadius: 12,
+                }}
+              />
+            ))}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // --- Error / not found state ---
+  if (fetchError || !run) {
     return (
       <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         <Topbar title="Run Detail" />
@@ -228,7 +142,9 @@ export function RunDetail() {
               color: "#c2410c",
             }}
           >
-            Run <strong>{runId}</strong> not found.{" "}
+            {fetchError
+              ? `Error loading run ${runId}: ${fetchError}`
+              : `Run ${runId} not found.`}{" "}
             <Link to="/" style={{ color: "#2563eb" }}>
               ← Back to Dashboard
             </Link>
@@ -240,10 +156,49 @@ export function RunDetail() {
 
   const status = resolveStatus(run);
 
+  async function handleApprove() {
+    if (!runId || deciding) return;
+    setDeciding(true);
+    try {
+      await approveRun(runId);
+      setDecisionBanner({ approved: true });
+      // Refresh run state after approval signal is sent
+      getRunDetail(runId).then(setRun).catch(console.error);
+    } catch (e) {
+      console.error("[RunDetail] approve failed:", e);
+    } finally {
+      setDeciding(false);
+    }
+  }
+
+  async function handleReject() {
+    if (!runId || deciding) return;
+    const note = window.prompt(
+      "Rejection note (required — leave blank for default):",
+      "",
+    );
+    if (note === null) return; // operator cancelled the prompt
+    setDeciding(true);
+    try {
+      await rejectRun(runId, note || "Rejected by operator");
+      setDecisionBanner({ approved: false });
+      // Refresh run state after rejection signal is sent
+      getRunDetail(runId).then(setRun).catch(console.error);
+    } catch (e) {
+      console.error("[RunDetail] reject failed:", e);
+    } finally {
+      setDeciding(false);
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
       <Topbar
-        title={`${run.company} — ${run.jobTitle}`}
+        title={
+          run.company && run.jobTitle
+            ? `${run.company} — ${run.jobTitle}`
+            : `Run ${run.id}`
+        }
         subtitle={`Run ${run.id}`}
         actions={
           <Link
@@ -263,32 +218,76 @@ export function RunDetail() {
       />
 
       <main style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
+        {/* Decision feedback banner */}
+        {decisionBanner && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: "12px 16px",
+              background: decisionBanner.approved ? "#dcfce7" : "#fee2e2",
+              border: `1px solid ${decisionBanner.approved ? "#bbf7d0" : "#fecaca"}`,
+              borderRadius: 8,
+              fontSize: 13,
+              color: decisionBanner.approved ? "#15803d" : "#b91c1c",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span>
+              Run <strong>{run.id}</strong> was{" "}
+              {decisionBanner.approved ? "approved ✓" : "rejected ✕"}.
+              {decisionBanner.approved
+                ? " The workflow will proceed to submission."
+                : " The run has been cancelled."}
+            </span>
+            <button
+              onClick={() => setDecisionBanner(null)}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                fontSize: 16,
+                color: "inherit",
+                padding: "0 4px",
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
-          {/* Left column: summary + timeline */}
+          {/* Left column: summary + cost + errors */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Summary card */}
+            {/* Run Summary */}
             <SectionCard title="Run Summary">
               <KVRow label="Status" value={<StatusBadge status={status} />} />
               <KVRow label="Mode" value={run.mode} />
               <KVRow label="Candidate" value={run.candidateId} />
+              {run.jobUrl && run.jobUrl !== "" && (
+                <KVRow
+                  label="Job URL"
+                  value={
+                    <a
+                      href={run.jobUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "#2563eb", fontSize: 12 }}
+                    >
+                      {run.jobUrl}
+                    </a>
+                  }
+                />
+              )}
               <KVRow
-                label="Job URL"
+                label="Current State"
                 value={
-                  <a
-                    href={run.jobUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ color: "#2563eb", fontSize: 12 }}
-                  >
-                    {run.jobUrl}
-                  </a>
+                  <span style={{ fontFamily: "monospace", fontSize: 12 }}>
+                    {run.currentState ?? "—"}
+                  </span>
                 }
               />
-              <KVRow label="Current State" value={
-                <span style={{ fontFamily: "monospace", fontSize: 12 }}>
-                  {run.currentState ?? "—"}
-                </span>
-              } />
               <KVRow
                 label="Progress"
                 value={
@@ -323,7 +322,13 @@ export function RunDetail() {
                 <KVRow
                   label="Confirmation ID"
                   value={
-                    <span style={{ fontFamily: "monospace", color: "#16a34a", fontWeight: 600 }}>
+                    <span
+                      style={{
+                        fontFamily: "monospace",
+                        color: "#16a34a",
+                        fontWeight: 600,
+                      }}
+                    >
                       {run.confirmationId}
                     </span>
                   }
@@ -331,11 +336,17 @@ export function RunDetail() {
               )}
             </SectionCard>
 
-            {/* Cost card */}
+            {/* Cost & Telemetry */}
             <SectionCard title="Cost &amp; Telemetry">
-              <KVRow label="Input tokens"     value={run.cost.inputTokens?.toLocaleString() ?? "—"} />
-              <KVRow label="Output tokens"    value={run.cost.outputTokens?.toLocaleString() ?? "—"} />
-              <KVRow label="LLM calls"        value={run.cost.llmCalls ?? "—"} />
+              <KVRow
+                label="Input tokens"
+                value={run.cost.inputTokens?.toLocaleString() ?? "—"}
+              />
+              <KVRow
+                label="Output tokens"
+                value={run.cost.outputTokens?.toLocaleString() ?? "—"}
+              />
+              <KVRow label="LLM calls" value={run.cost.llmCalls ?? "—"} />
               <KVRow
                 label="Total latency"
                 value={
@@ -368,35 +379,57 @@ export function RunDetail() {
                       fontSize: 12,
                     }}
                   >
-                    <span style={{ fontFamily: "monospace", color: "#991b1b", fontWeight: 600 }}>
+                    <span
+                      style={{
+                        fontFamily: "monospace",
+                        color: "#991b1b",
+                        fontWeight: 600,
+                      }}
+                    >
                       {err.state}
                     </span>
-                    <span style={{ color: "#7f1d1d", marginLeft: 8 }}>{err.message}</span>
+                    <span style={{ color: "#7f1d1d", marginLeft: 8 }}>
+                      {err.message}
+                    </span>
                   </div>
                 ))}
               </SectionCard>
             )}
           </div>
 
-          {/* Right column: timeline + action panel */}
+          {/* Right column: timeline + action panel + artifacts */}
           <div style={{ width: 320, flexShrink: 0 }}>
-            {/* State timeline */}
+            {/* State Timeline */}
             <SectionCard title="State Timeline">
-              <RunTimeline entries={run.stateHistory} />
+              {run.stateHistory.length > 0 ? (
+                <RunTimeline entries={run.stateHistory} />
+              ) : (
+                <p
+                  style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}
+                >
+                  No state history yet.
+                </p>
+              )}
             </SectionCard>
 
-            {/* Action panel — review gate */}
-            {status === "REVIEW" && (
+            {/* Awaiting Review action panel */}
+            {status === "REVIEW" && !decisionBanner && (
               <div
                 style={{
                   background: "#fffbeb",
                   border: "1px solid #fde68a",
                   borderRadius: 12,
                   padding: "16px 20px",
+                  marginBottom: 20,
                 }}
               >
                 <div
-                  style={{ fontSize: 13, fontWeight: 700, color: "#92400e", marginBottom: 8 }}
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#92400e",
+                    marginBottom: 8,
+                  }}
                 >
                   ⏸ Awaiting Review
                 </div>
@@ -406,6 +439,8 @@ export function RunDetail() {
                 </p>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
+                    disabled={deciding}
+                    onClick={() => void handleApprove()}
                     style={{
                       flex: 1,
                       padding: "8px 0",
@@ -413,18 +448,16 @@ export function RunDetail() {
                       fontWeight: 600,
                       borderRadius: 7,
                       border: "none",
-                      background: "#16a34a",
+                      background: deciding ? "#86efac" : "#16a34a",
                       color: "#ffffff",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => {
-                      // TODO: POST /api/runs/:runId/review { approved: true }
-                      alert(`Approved run ${run.id} — API integration pending`);
+                      cursor: deciding ? "not-allowed" : "pointer",
                     }}
                   >
-                    Approve
+                    {deciding ? "…" : "Approve"}
                   </button>
                   <button
+                    disabled={deciding}
+                    onClick={() => void handleReject()}
                     style={{
                       flex: 1,
                       padding: "8px 0",
@@ -433,22 +466,21 @@ export function RunDetail() {
                       borderRadius: 7,
                       border: "1px solid #e2e8f0",
                       background: "#ffffff",
-                      color: "#dc2626",
-                      cursor: "pointer",
-                    }}
-                    onClick={() => {
-                      // TODO: POST /api/runs/:runId/review { approved: false }
-                      alert(`Rejected run ${run.id} — API integration pending`);
+                      color: deciding ? "#fca5a5" : "#dc2626",
+                      cursor: deciding ? "not-allowed" : "pointer",
                     }}
                   >
-                    Reject
+                    {deciding ? "…" : "Reject"}
                   </button>
                 </div>
               </div>
             )}
 
             {/* Artifacts */}
-            {(run.artifacts.screenshots || run.artifacts.confirmationScreenshot) && (
+            {(run.artifacts.screenshots ||
+              run.artifacts.confirmationScreenshot ||
+              run.artifacts.domSnapshots ||
+              run.artifacts.harFile) && (
               <SectionCard title="Artifacts">
                 {run.artifacts.confirmationScreenshot && (
                   <div style={{ marginBottom: 8 }}>
@@ -463,18 +495,32 @@ export function RunDetail() {
                   </div>
                 )}
                 {run.artifacts.screenshots &&
-                  Object.entries(run.artifacts.screenshots).map(([state, url]) => (
-                    <div key={state} style={{ marginBottom: 8 }}>
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ fontSize: 12, color: "#2563eb" }}
-                      >
-                        📸 {state}
-                      </a>
-                    </div>
-                  ))}
+                  Object.entries(run.artifacts.screenshots).map(
+                    ([state, url]) => (
+                      <div key={state} style={{ marginBottom: 8 }}>
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ fontSize: 12, color: "#2563eb" }}
+                        >
+                          📸 {state}
+                        </a>
+                      </div>
+                    ),
+                  )}
+                {run.artifacts.harFile && (
+                  <div style={{ marginBottom: 8 }}>
+                    <a
+                      href={run.artifacts.harFile}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 12, color: "#2563eb" }}
+                    >
+                      🗂 HAR file
+                    </a>
+                  </div>
+                )}
               </SectionCard>
             )}
           </div>
