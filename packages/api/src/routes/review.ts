@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { ApiError } from "../middleware/error-handler.js";
+import type { TemporalClientWrapper } from "../temporal-client.js";
 import type {
   ReviewQueueQuery,
   ReviewDecisionBody,
@@ -9,6 +10,21 @@ import type {
 } from "../types.js";
 
 export const reviewRouter = Router();
+
+/**
+ * Extract the Temporal client from app.locals.
+ * Throws 503 if Temporal is not connected.
+ */
+function requireTemporalClient(locals: Record<string, unknown>): TemporalClientWrapper {
+  const client = locals.temporalClient as TemporalClientWrapper | undefined;
+  if (!client) {
+    throw new ApiError(
+      503,
+      "Temporal client not available — review signaling is disabled",
+    );
+  }
+  return client;
+}
 
 /**
  * GET /api/review/queue — Get the pending review queue.
@@ -49,16 +65,18 @@ reviewRouter.get("/queue", (req, res, next) => {
  * Returns the run state, form data snapshot, screenshots, and other
  * context needed for a reviewer to make an approval decision.
  */
-reviewRouter.get("/:runId", (req, res, next) => {
+reviewRouter.get("/:runId", async (req, res, next) => {
   try {
     const { runId } = req.params;
+    const temporal = requireTemporalClient(req.app.locals);
 
-    // Stub: In production, this will:
-    // 1. Look up the run record
-    // 2. Query the Temporal workflow for current state/data
-    // 3. Return form data, screenshots, and approval context
+    const status = await temporal.queryWorkflowStatus(runId);
 
-    throw ApiError.notFound("Review item", runId);
+    const response: ApiResponse<{ runId: string; workflowStatus: unknown }> = {
+      success: true,
+      data: { runId, workflowStatus: status },
+    };
+    res.json(response);
   } catch (err) {
     next(err);
   }
@@ -70,16 +88,19 @@ reviewRouter.get("/:runId", (req, res, next) => {
  * Sends the reviewApprovalSignal to the Temporal workflow with
  * approved=true and optional field edits.
  */
-reviewRouter.post("/:runId/approve", (req, res, next) => {
+reviewRouter.post("/:runId/approve", async (req, res, next) => {
   try {
     const { runId } = req.params;
     const body = req.body as Partial<ReviewDecisionBody>;
+    const temporal = requireTemporalClient(req.app.locals);
 
-    // Stub: In production, this will:
-    // 1. Verify the run exists and is in waiting_review state
-    // 2. Send reviewApprovalSignal to the Temporal workflow
-    //    with { approved: true, edits: body.edits, reviewerNote: body.reviewerNote }
-    // 3. Return success
+    const decision: ReviewDecisionBody = {
+      approved: true,
+      edits: body.edits,
+      reviewerNote: body.reviewerNote,
+    };
+
+    await temporal.signalReviewApproval(runId, decision);
 
     const response: ApiResponse<{ runId: string; decision: "approved" }> = {
       success: true,
@@ -98,7 +119,7 @@ reviewRouter.post("/:runId/approve", (req, res, next) => {
  * Sends the reviewApprovalSignal to the Temporal workflow with
  * approved=false, which causes the workflow to return CANCELLED.
  */
-reviewRouter.post("/:runId/reject", (req, res, next) => {
+reviewRouter.post("/:runId/reject", async (req, res, next) => {
   try {
     const { runId } = req.params;
     const body = req.body as Partial<ReviewDecisionBody>;
@@ -107,11 +128,14 @@ reviewRouter.post("/:runId/reject", (req, res, next) => {
       throw ApiError.badRequest("reviewerNote is required when rejecting");
     }
 
-    // Stub: In production, this will:
-    // 1. Verify the run exists and is in waiting_review state
-    // 2. Send reviewApprovalSignal to the Temporal workflow
-    //    with { approved: false, reviewerNote: body.reviewerNote }
-    // 3. Return success
+    const temporal = requireTemporalClient(req.app.locals);
+
+    const decision: ReviewDecisionBody = {
+      approved: false,
+      reviewerNote: body.reviewerNote,
+    };
+
+    await temporal.signalReviewApproval(runId, decision);
 
     const response: ApiResponse<{ runId: string; decision: "rejected" }> = {
       success: true,

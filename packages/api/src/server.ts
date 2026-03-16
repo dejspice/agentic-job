@@ -8,12 +8,29 @@ import { candidatesRouter } from "./routes/candidates.js";
 import { driveSyncRouter } from "./routes/drive-sync.js";
 import { acceleratorsRouter } from "./routes/accelerators.js";
 import { reviewRouter } from "./routes/review.js";
+import type { TemporalClientWrapper, TemporalConfig } from "./temporal-client.js";
 
 const DEFAULT_PORT = 4000;
 
 export interface ServerConfig {
   port?: number;
   corsOrigin?: string | string[];
+  /** Pre-configured Temporal client. When provided, enables workflow signaling. */
+  temporalClient?: TemporalClientWrapper;
+  /** Temporal connection config. Used to create a client during startServer if temporalClient is not provided. */
+  temporal?: TemporalConfig;
+}
+
+/**
+ * Module augmentation so route handlers can access the Temporal client
+ * via req.app.locals with type safety.
+ */
+declare global {
+  namespace Express {
+    interface Locals {
+      temporalClient?: TemporalClientWrapper;
+    }
+  }
 }
 
 /**
@@ -22,6 +39,10 @@ export interface ServerConfig {
  */
 export function createApp(config: ServerConfig = {}): express.Application {
   const app = express();
+
+  if (config.temporalClient) {
+    app.locals.temporalClient = config.temporalClient;
+  }
 
   // --- Global middleware ---
   app.use(cors({ origin: config.corsOrigin ?? "*" }));
@@ -33,6 +54,7 @@ export function createApp(config: ServerConfig = {}): express.Application {
     res.json({
       status: "ok",
       service: "dejsol-api",
+      temporalConnected: !!app.locals.temporalClient,
       timestamp: new Date().toISOString(),
     });
   });
@@ -61,15 +83,38 @@ export function createApp(config: ServerConfig = {}): express.Application {
 
 /**
  * Start the API server on the configured port.
- * Returns a handle to close the server.
+ * Optionally connects to Temporal if config.temporal is provided.
+ * Returns handles to close the server and Temporal connection.
  */
-export function startServer(config: ServerConfig = {}) {
+export async function startServer(config: ServerConfig = {}) {
   const port = config.port ?? parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10);
-  const app = createApp(config);
+
+  let temporalClient = config.temporalClient;
+
+  if (!temporalClient && config.temporal) {
+    const { TemporalClientWrapper: Wrapper } = await import("./temporal-client.js");
+    try {
+      temporalClient = await Wrapper.connect(config.temporal);
+    } catch (err) {
+      console.warn("[api] Failed to connect to Temporal, review signaling will be unavailable:", err);
+    }
+  }
+
+  const app = createApp({ ...config, temporalClient });
 
   const server = app.listen(port, () => {
     console.log(`[api] Dejsol API server listening on port ${port}`);
   });
 
-  return { app, server };
+  return {
+    app,
+    server,
+    temporalClient,
+    async close() {
+      server.close();
+      if (temporalClient) {
+        await temporalClient.close();
+      }
+    },
+  };
 }

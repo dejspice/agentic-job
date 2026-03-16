@@ -2,6 +2,16 @@
 export { createApp, startServer } from "./server.js";
 export type { ServerConfig } from "./server.js";
 
+// Temporal client
+export {
+  TemporalClientWrapper,
+  getRunWorkflowId,
+  SIGNAL_NAMES,
+  QUERY_NAMES,
+  TASK_QUEUE,
+} from "./temporal-client.js";
+export type { TemporalConfig } from "./temporal-client.js";
+
 // Middleware
 export { errorHandler, ApiError } from "./middleware/error-handler.js";
 export { requestLogging } from "./middleware/request-logging.js";
