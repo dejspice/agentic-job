@@ -4,6 +4,20 @@ node_modules/
 # Build output
 dist/
 *.tsbuildinfo
+# Compiled JS/declaration files that may be emitted alongside source
+packages/*/src/**/*.js
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts.map
+# Root-level build artifacts
+scripts/*.js
+scripts/*.d.ts
+scripts/*.js.map
+scripts/*.d.ts.map
+packages/console/vite.config.js
+packages/console/vite.config.d.ts
+packages/console/vite.config.js.map
+packages/console/vite.config.d.ts.map
 
 # Environment
 .env
