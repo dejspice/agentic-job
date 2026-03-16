@@ -269,7 +269,8 @@ const PATTERN_MATCHERS: readonly PatternMatcher[] = [
 
   // ── Submit-blocking errors ────────────────────────────────────────────────
   {
-    pattern: /(fix|correct|resolve|address) (the )?(errors?|issues?|problems?) (before|to) (submit|proceed|continu)/i,
+    // Matches: "fix errors before submit", "fix errors before you submit", "correct issues to continue", etc.
+    pattern: /(fix|correct|resolve|address) (the )?(errors?|issues?|problems?) (before|to)( \w+)? (submit|proceed|continu)/i,
     category: "SUBMIT_BLOCKED",
     severity: "BLOCKING",
     message: "Page has errors that must be resolved before submitting",
