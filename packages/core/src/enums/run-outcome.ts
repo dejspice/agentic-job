@@ -1,0 +1,6 @@
+export enum RunOutcome {
+  SUBMITTED = "SUBMITTED",
+  FAILED = "FAILED",
+  ESCALATED = "ESCALATED",
+  CANCELLED = "CANCELLED",
+}
