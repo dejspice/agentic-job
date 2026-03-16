@@ -1,11 +1,27 @@
-import type { StateName } from "@dejsol/core";
+import type { StateName, WorkerCommand, CommandResult, ArtifactKind, ArtifactReference } from "@dejsol/core";
 
 /** Outcome of executing a single state. */
 export type StateOutcome = "success" | "failure" | "skipped" | "escalated";
 
 /**
+ * Execute a browser-worker command.
+ * Provided at runtime when a real browser session is available.
+ */
+export type CommandExecutor = (command: WorkerCommand) => Promise<CommandResult>;
+
+/**
+ * Capture and persist a browser artifact (screenshot, DOM snapshot, etc.).
+ * Provided at runtime when an artifact store is wired.
+ */
+export type ArtifactCaptureFn = (
+  kind: ArtifactKind,
+  label: string,
+  options?: { fullPage?: boolean; scope?: string },
+) => Promise<ArtifactReference>;
+
+/**
  * Runtime context passed to every state handler.
- * Will be extended with browser session, policy engine, etc. in later phases.
+ * Extended with browser session and artifact capture capabilities.
  */
 export interface StateContext {
   runId: string;
@@ -16,6 +32,10 @@ export interface StateContext {
   stateHistory: ReadonlyArray<{ state: StateName; outcome: StateOutcome }>;
   /** Shared mutable data bag carried across states within a single run. */
   data: Record<string, unknown>;
+  /** Browser-worker command executor — present when running with a real browser. */
+  execute?: CommandExecutor;
+  /** Artifact capture function — present when an artifact store is wired. */
+  captureArtifact?: ArtifactCaptureFn;
 }
 
 /** Result returned by a state handler's execute function. */

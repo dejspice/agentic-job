@@ -1,4 +1,11 @@
-export type { StateHandler, StateContext, StateResult, StateOutcome } from "./types.js";
+export type {
+  StateHandler,
+  StateContext,
+  StateResult,
+  StateOutcome,
+  CommandExecutor,
+  ArtifactCaptureFn,
+} from "./types.js";
 
 export { ApplyStateMachine } from "./state-machine.js";
 

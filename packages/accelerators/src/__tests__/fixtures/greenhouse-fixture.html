@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Software Engineer - Acme Corp - Greenhouse Fixture</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f9f9f9; }
+    .opening { max-width: 720px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 8px; }
+    #header .company-name { font-size: 24px; font-weight: bold; color: #333; }
+    .job-post h1 { font-size: 22px; color: #111; }
+    .job-post .meta { color: #666; margin-bottom: 16px; }
+    .btn-apply { display: inline-block; padding: 12px 24px; background: #3b8427; color: #fff; text-decoration: none; border-radius: 4px; font-weight: bold; cursor: pointer; border: none; font-size: 16px; }
+    .btn-apply:hover { background: #2d6b1d; }
+    #application { display: none; max-width: 720px; margin: 20px auto; background: #fff; padding: 24px; border-radius: 8px; }
+    #application.visible { display: block; }
+    .field-group { margin-bottom: 16px; }
+    .field-group label { display: block; font-weight: bold; margin-bottom: 4px; color: #333; }
+    .field-group label .required { color: #c00; }
+    .field-group input, .field-group select, .field-group textarea { width: 100%; max-width: 400px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    .field-group input[type="file"] { border: none; padding: 4px 0; }
+    #submit_app { padding: 12px 24px; background: #3b8427; color: #fff; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 16px; }
+    #submit_app:hover { background: #2d6b1d; }
+    .application-confirmation { display: none; max-width: 720px; margin: 20px auto; background: #fff; padding: 24px; border-radius: 8px; text-align: center; }
+    .application-confirmation.visible { display: block; }
+    .application-confirmation h2 { color: #3b8427; }
+    .parsing-indicator { display: none; color: #888; font-style: italic; margin: 8px 0; }
+    .parsing-indicator.active { display: block; }
+  </style>
+</head>
+<body>
+  <!-- Job listing section -->
+  <div class="opening">
+    <div id="header">
+      <span class="company-name">Acme Corp</span>
+    </div>
+    <div class="job-post">
+      <h1>Software Engineer</h1>
+      <div class="meta">
+        <span>Department: Engineering</span> &middot;
+        <span>Location: San Francisco, CA</span>
+      </div>
+      <p>We are looking for a talented Software Engineer to join our team.</p>
+      <a href="#application" class="btn-apply" id="app_submit">Apply for this job</a>
+    </div>
+  </div>
+
+  <!-- Application form section -->
+  <div id="application">
+    <h2>Apply for this Job</h2>
+    <form id="application_form" onsubmit="return false;">
+      <div class="field-group">
+        <label for="resume">Resume/CV <span class="required">*</span></label>
+        <input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx,.txt" required />
+        <div class="parsing-indicator" id="parse_indicator">Parsing resume...</div>
+      </div>
+
+      <div class="field-group">
+        <label for="first_name">First Name <span class="required">*</span></label>
+        <input type="text" id="first_name" name="job_application[first_name]" required />
+      </div>
+
+      <div class="field-group">
+        <label for="last_name">Last Name <span class="required">*</span></label>
+        <input type="text" id="last_name" name="job_application[last_name]" required />
+      </div>
+
+      <div class="field-group">
+        <label for="email">Email <span class="required">*</span></label>
+        <input type="email" id="email" name="job_application[email]" required />
+      </div>
+
+      <div class="field-group">
+        <label for="phone">Phone</label>
+        <input type="tel" id="phone" name="job_application[phone]" />
+      </div>
+
+      <button type="submit" id="submit_app">Submit Application</button>
+    </form>
+  </div>
+
+  <!-- Confirmation section -->
+  <div class="application-confirmation" id="application_confirmation">
+    <h2>Application submitted</h2>
+    <p>Thank you for applying to <strong>Software Engineer</strong> at Acme Corp.</p>
+    <p>Your application has been submitted successfully.</p>
+    <p>Confirmation ID: <strong id="confirmation_id">GH-2026-00042</strong></p>
+  </div>
+
+  <script>
+    // Simulate Greenhouse single-page behavior
+    document.getElementById('app_submit').addEventListener('click', function(e) {
+      e.preventDefault();
+      var appSection = document.getElementById('application');
+      appSection.classList.add('visible');
+      appSection.scrollIntoView({ behavior: 'smooth' });
+    });
+
+    // Simulate resume parse: after file upload, briefly show parsing indicator
+    // then auto-fill fields (mimics Greenhouse's resume parse behavior)
+    document.getElementById('resume').addEventListener('change', function() {
+      if (this.files && this.files.length > 0) {
+        var indicator = document.getElementById('parse_indicator');
+        indicator.classList.add('active');
+
+        setTimeout(function() {
+          indicator.classList.remove('active');
+          // Greenhouse auto-fills some fields after parsing
+          document.getElementById('first_name').value = 'Parsed';
+          document.getElementById('first_name').dispatchEvent(new Event('input', { bubbles: true }));
+        }, 300);
+      }
+    });
+
+    // Submit handler: hide form, show confirmation
+    document.getElementById('submit_app').addEventListener('click', function(e) {
+      e.preventDefault();
+      var form = document.getElementById('application');
+      var confirmation = document.getElementById('application_confirmation');
+      form.style.display = 'none';
+      confirmation.classList.add('visible');
+    });
+  </script>
+</body>
+</html>

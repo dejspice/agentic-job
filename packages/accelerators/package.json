@@ -15,6 +15,9 @@
     "@dejsol/core": "*"
   },
   "devDependencies": {
-    "@dejsol/intelligence": "*"
+    "@dejsol/intelligence": "*",
+    "@dejsol/state-machine": "*",
+    "@dejsol/browser-worker": "*",
+    "playwright": "^1.49.0"
   }
 }
