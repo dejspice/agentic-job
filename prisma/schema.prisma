@@ -1,0 +1,138 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AtsType {
+  WORKDAY
+  GREENHOUSE
+  LEVER
+  ASHBY
+  ICIMS
+  SMARTRECRUITERS
+  TALEO
+  SAP
+  CUSTOM
+}
+
+enum JobStatus {
+  QUEUED
+  IN_PROGRESS
+  REVIEW
+  SUBMITTED
+  FAILED
+  SKIPPED
+}
+
+enum RunMode {
+  FULL_AUTO
+  REVIEW_BEFORE_SUBMIT
+  HUMAN_TAKEOVER
+}
+
+enum RunOutcome {
+  SUBMITTED
+  FAILED
+  ESCALATED
+  CANCELLED
+}
+
+model Candidate {
+  id               String   @id @default(uuid())
+  name             String
+  email            String
+  phone            String?
+  driveFolderId    String?  @map("drive_folder_id")
+  trackingSheetId  String?  @map("tracking_sheet_id")
+  profileJson      Json     @map("profile_json")
+  answerBankJson   Json     @default("{}") @map("answer_bank_json")
+  denylist         String[] @default([])
+  policiesJson     Json     @default("{}") @map("policies_json")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  jobs             JobOpportunity[]
+  runs             ApplyRun[]
+
+  @@map("candidates")
+}
+
+model JobOpportunity {
+  id                String    @id @default(uuid())
+  candidateId       String    @map("candidate_id")
+  company           String
+  jobTitle          String    @map("job_title")
+  jobUrl            String    @map("job_url")
+  atsType           AtsType   @map("ats_type")
+  location          String?
+  compensationJson  Json?     @map("compensation_json")
+  requirementsJson  Json?     @map("requirements_json")
+  fitScore          Float?    @map("fit_score")
+  applyabilityScore Float?    @map("applyability_score")
+  confidenceScore   Float?    @map("confidence_score")
+  status            JobStatus @default(QUEUED)
+  idempotencyKey    String    @unique @map("idempotency_key")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  runs              ApplyRun[]
+
+  @@map("job_opportunities")
+}
+
+model ApplyRun {
+  id                 String      @id @default(uuid())
+  jobId              String      @map("job_id")
+  candidateId        String      @map("candidate_id")
+  mode               RunMode
+  runtimeProvider    String?     @map("runtime_provider")
+  resumeFile         String?     @map("resume_file")
+  currentState       String?     @map("current_state")
+  stateHistoryJson   Json        @default("[]") @map("state_history_json")
+  answersJson        Json        @default("{}") @map("answers_json")
+  errorLogJson       Json        @default("[]") @map("error_log_json")
+  artifactUrlsJson   Json        @default("{}") @map("artifact_urls_json")
+  confirmationId     String?     @map("confirmation_id")
+  outcome            RunOutcome?
+  humanInterventions Int         @default(0) @map("human_interventions")
+  costJson           Json        @default("{}") @map("cost_json")
+  startedAt          DateTime    @default(now()) @map("started_at")
+  completedAt        DateTime?   @map("completed_at")
+  job                JobOpportunity @relation(fields: [jobId], references: [id])
+  candidate          Candidate      @relation(fields: [candidateId], references: [id])
+
+  @@map("apply_runs")
+}
+
+model AtsAccelerator {
+  id                  String   @id @default(uuid())
+  atsType             AtsType  @unique @map("ats_type")
+  version             Int      @default(1)
+  pageClassifiersJson Json     @map("page_classifiers_json")
+  formSchemaJson      Json     @map("form_schema_json")
+  pathTemplatesJson   Json     @map("path_templates_json")
+  edgeCasesJson       Json     @default("{}") @map("edge_cases_json")
+  successRate         Float?   @map("success_rate")
+  lastValidated       DateTime? @map("last_validated")
+
+  @@map("ats_accelerators")
+}
+
+model PortalFingerprint {
+  id                 String    @id @default(uuid())
+  employerDomain     String    @map("employer_domain")
+  atsType            AtsType   @map("ats_type")
+  knownFlowJson      Json      @default("{}") @map("known_flow_json")
+  fieldMappingsJson  Json      @default("{}") @map("field_mappings_json")
+  avgSteps           Int?      @map("avg_steps")
+  avgDuration        Int?      @map("avg_duration")
+  lastSuccess        DateTime? @map("last_success")
+  lastFailure        DateTime? @map("last_failure")
+  challengeFrequency Float?    @map("challenge_frequency")
+  notes              String?
+
+  @@unique([employerDomain, atsType])
+  @@map("portal_fingerprints")
+}

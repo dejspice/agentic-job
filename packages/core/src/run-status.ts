@@ -1,0 +1,15 @@
+export enum JobStatus {
+  QUEUED = "QUEUED",
+  IN_PROGRESS = "IN_PROGRESS",
+  REVIEW = "REVIEW",
+  SUBMITTED = "SUBMITTED",
+  FAILED = "FAILED",
+  SKIPPED = "SKIPPED",
+}
+
+export enum RunOutcome {
+  SUBMITTED = "SUBMITTED",
+  FAILED = "FAILED",
+  ESCALATED = "ESCALATED",
+  CANCELLED = "CANCELLED",
+}
