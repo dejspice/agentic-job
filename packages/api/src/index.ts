@@ -24,6 +24,17 @@ export { driveSyncRouter } from "./routes/drive-sync.js";
 export { acceleratorsRouter } from "./routes/accelerators.js";
 export { reviewRouter } from "./routes/review.js";
 
+// Workflow → API mappers
+export {
+  workflowStatusToRunStatus,
+  workflowStatusToReviewPartial,
+  extractWorkflowErrors,
+} from "./mappers.js";
+
+// Workflow result persistence
+export { persistRunResult } from "./persistence.js";
+export type { RunResultPayload } from "./persistence.js";
+
 // API types
 export type {
   ApiResponse,

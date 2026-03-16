@@ -1,4 +1,5 @@
 import type { StateName, ArtifactReference } from "@dejsol/core";
+import { ApplyStateMachine, STATE_POLICIES } from "@dejsol/state-machine";
 import type { StateOutcome } from "@dejsol/state-machine";
 
 /** Input for the browser activity — executes a single state machine state. */
@@ -33,30 +34,77 @@ export interface BrowserActivityResult {
 /**
  * Execute a single state machine state via browser automation.
  *
- * Responsibilities (to be wired in later phases):
- * - Allocate or reuse a browser session via browser-broker
- * - Instantiate the state machine and execute the given state
- * - Capture screenshots / DOM snapshots per policy
- * - Return the outcome, updated data, and next state
+ * This implementation uses ApplyStateMachine to execute the registered
+ * state handler for the given state.  In this phase the state handlers
+ * are deterministic stubs; real Playwright execution will be wired in
+ * a later phase via the browser-broker session allocation path.
  *
- * Each call to this activity represents one state execution.
- * The workflow calls this in a loop, advancing through states.
+ * Artifact references are produced based on the state's policy
+ * (requiresScreenshot / requiresDomSnapshot).  URLs use the
+ * `memory://` scheme as a synthetic placeholder until the S3/GCS
+ * ArtifactStore is wired.
  */
 export async function browserActivity(
   input: BrowserActivityInput,
 ): Promise<BrowserActivityResult> {
-  const { state, data } = input;
+  const { runId, jobId, candidateId, jobUrl, state, data } = input;
 
-  // Stub: In production, this will:
-  // 1. Allocate browser session via browser-broker
-  // 2. Create StateContext from input
-  // 3. Execute state handler via ApplyStateMachine.executeState()
-  // 4. Resolve next state via ApplyStateMachine.resolveNextState()
-  // 5. Capture artifacts per state policy
-  // 6. Return result with next state
+  const sm = new ApplyStateMachine();
 
-  throw new Error(
-    `browserActivity not yet implemented for state: ${state}. ` +
-      `Data keys: [${Object.keys(data).join(", ")}]`,
-  );
+  const context = {
+    runId,
+    jobId,
+    candidateId,
+    jobUrl,
+    currentState: state,
+    stateHistory: [] as ReadonlyArray<{ state: StateName; outcome: StateOutcome }>,
+    data,
+  };
+
+  let stateResult;
+  try {
+    stateResult = await sm.executeState(state, context);
+  } catch (err) {
+    return {
+      outcome: "failure",
+      nextState: null,
+      data,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const nextState = sm.resolveNextState(state, stateResult);
+
+  // Produce artifact references according to the state's capture policy.
+  const artifacts: ArtifactReference[] = [];
+  const policy = STATE_POLICIES[state];
+  const now = new Date().toISOString();
+
+  if (policy?.requiresScreenshot) {
+    artifacts.push({
+      kind: "screenshot",
+      label: `${state}/entry`,
+      url: `memory://${runId}/${state}/screenshot.png`,
+      capturedAt: now,
+      state,
+    });
+  }
+
+  if (policy?.requiresDomSnapshot) {
+    artifacts.push({
+      kind: "dom_snapshot",
+      label: `${state}/fields`,
+      url: `memory://${runId}/${state}/dom.html`,
+      capturedAt: now,
+      state,
+    });
+  }
+
+  return {
+    outcome: stateResult.outcome,
+    nextState,
+    data: { ...data, ...(stateResult.data ?? {}) },
+    ...(stateResult.error ? { error: stateResult.error } : {}),
+    artifacts,
+  };
 }

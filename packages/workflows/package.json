@@ -9,6 +9,8 @@
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "test": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/apply-workflow.test.ts",
+    "test:integration": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/integration/review-flow.integration.test.ts",
+    "test:all": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/apply-workflow.test.ts src/__tests__/integration/review-flow.integration.test.ts",
     "typecheck:test": "tsc --project tsconfig.test.json"
   },
   "dependencies": {

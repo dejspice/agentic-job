@@ -1,4 +1,7 @@
-import type { StateName, ArtifactReference } from "@dejsol/core";
+import { StateName } from "@dejsol/core";
+import type { ArtifactReference } from "@dejsol/core";
+import { ApplyStateMachine } from "@dejsol/state-machine";
+import type { StateOutcome } from "@dejsol/state-machine";
 
 /** Input for the submit activity. */
 export interface SubmitActivityInput {
@@ -34,27 +37,78 @@ export interface SubmitActivityResult {
  * - May need special retry / timeout policies
  * - Gated behind the review approval signal in REVIEW_BEFORE_SUBMIT mode
  *
- * Responsibilities (to be wired in later phases):
- * - Apply reviewer edits if present
- * - Execute the submit state handler
- * - Capture a screenshot of the post-submit state
- * - Detect success vs. error conditions
+ * Reviewer edits from the review gate are merged into the data bag before
+ * execution so the state handler can apply them to form fields.
+ *
+ * A post-submit screenshot artifact is produced unconditionally —
+ * SUBMIT always requires screenshot capture per the state policy.
  */
 export async function submitActivity(
   input: SubmitActivityInput,
 ): Promise<SubmitActivityResult> {
-  const { runId, data, reviewerEdits } = input;
+  const { runId, jobId, candidateId, jobUrl, data, reviewerEdits } = input;
 
-  // Stub: In production, this will:
-  // 1. Reuse the browser session from prior states
-  // 2. Apply any reviewer edits to form fields
-  // 3. Execute the SUBMIT state handler
-  // 4. Capture post-submit screenshot
-  // 5. Detect success indicators
+  // Merge reviewer edits into the data bag so the state handler can apply them.
+  const mergedData: Record<string, unknown> = {
+    ...data,
+    ...(reviewerEdits ? { reviewerEdits } : {}),
+  };
 
-  throw new Error(
-    `submitActivity not yet implemented for run: ${runId}. ` +
-      `Has reviewer edits: ${reviewerEdits !== undefined}. ` +
-      `Data keys: [${Object.keys(data).join(", ")}]`,
-  );
+  const sm = new ApplyStateMachine();
+
+  const context = {
+    runId,
+    jobId,
+    candidateId,
+    jobUrl,
+    currentState: StateName.SUBMIT,
+    stateHistory: [] as ReadonlyArray<{
+      state: StateName;
+      outcome: StateOutcome;
+    }>,
+    data: mergedData,
+  };
+
+  let stateResult;
+  try {
+    stateResult = await sm.executeState(StateName.SUBMIT, context);
+  } catch (err) {
+    return {
+      success: false,
+      nextState: StateName.ESCALATE,
+      data: mergedData,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  if (
+    stateResult.outcome === "failure" ||
+    stateResult.outcome === "escalated"
+  ) {
+    return {
+      success: false,
+      nextState: StateName.ESCALATE,
+      data: { ...mergedData, ...(stateResult.data ?? {}) },
+      error: stateResult.error ?? "Submit state failed",
+    };
+  }
+
+  // SUBMIT always captures a post-submit screenshot per architecture policy.
+  const now = new Date().toISOString();
+  const artifacts: ArtifactReference[] = [
+    {
+      kind: "screenshot",
+      label: `${StateName.SUBMIT}/post-submit`,
+      url: `memory://${runId}/${StateName.SUBMIT}/post-submit.png`,
+      capturedAt: now,
+      state: StateName.SUBMIT,
+    },
+  ];
+
+  return {
+    success: true,
+    nextState: StateName.CAPTURE_CONFIRMATION,
+    data: { ...mergedData, ...(stateResult.data ?? {}) },
+    artifacts,
+  };
 }
