@@ -1,4 +1,4 @@
-import type { StateName } from "@dejsol/core";
+import type { StateName, ArtifactReference } from "@dejsol/core";
 
 /** Input for the capture activity. */
 export interface CaptureActivityInput {
@@ -17,7 +17,11 @@ export interface CaptureActivityResult {
   confirmationId?: string;
   data: Record<string, unknown>;
   error?: string;
-  artifactUrls?: Record<string, string>;
+  /**
+   * Typed artifact references from the post-submit confirmation page
+   * (confirmation screenshot, HAR for network audit, etc.).
+   */
+  artifacts?: ArtifactReference[];
 }
 
 /**

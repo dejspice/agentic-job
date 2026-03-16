@@ -44,3 +44,5 @@ export type {
   SelectorTarget,
   CommandResult,
 } from "./worker-command.js";
+
+export type { ArtifactKind, ArtifactReference } from "./artifact.js";
