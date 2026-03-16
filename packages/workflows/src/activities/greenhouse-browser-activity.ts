@@ -200,6 +200,19 @@ export async function runGreenhouseHappyPathActivity(
       }
 
       if (stateResult.outcome === "failure") {
+        // Activity-level safety-net: capture a failure screenshot if the
+        // state handler didn't already produce one (best-effort, never masks
+        // the original failure).
+        if (stateContext.captureArtifact) {
+          try {
+            await stateContext.captureArtifact(
+              "screenshot",
+              `${String(stateName)}-activity-failure`,
+            );
+          } catch {
+            // Swallow — never obscure the original failure reason.
+          }
+        }
         return {
           outcome: "failure",
           statesCompleted,

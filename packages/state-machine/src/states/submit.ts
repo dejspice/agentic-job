@@ -1,7 +1,27 @@
 import { StateName } from "@dejsol/core";
 import type { StateHandler, StateContext, StateResult } from "../types.js";
 
-const GREENHOUSE_SUBMIT_SELECTORS = '#submit_app, input[type="submit"], button[type="submit"]';
+const GREENHOUSE_SUBMIT_SELECTORS =
+  '#submit_app, input[type="submit"], button[type="submit"]';
+
+/**
+ * Confirmation selectors for post-submit page detection.
+ *
+ * Expanded beyond the canonical Greenhouse classes to cover boards that use
+ * alternate confirmation element names or flash notice patterns.
+ */
+const CONFIRMATION_WAIT_SELECTORS = [
+  ".application-confirmation",
+  "#application_confirmation",
+  ".flash-success",
+  ".confirmation-message",
+  ".success-message",
+  ".submitted-message",
+  ".application-success",
+  '[data-application-complete="true"]',
+  ".flash.notice",
+  ".notice.success",
+].join(", ");
 
 export const submitState: StateHandler = {
   name: StateName.SUBMIT,
@@ -34,17 +54,23 @@ export const submitState: StateHandler = {
 
     const waitResult = await context.execute({
       type: "WAIT_FOR",
-      target: ".application-confirmation, #application_confirmation, .flash-success",
+      target: CONFIRMATION_WAIT_SELECTORS,
       timeoutMs: 10000,
     });
 
+    // Always capture post-submit screenshot regardless of confirmation outcome —
+    // it is the permanent audit record that the submit button was activated.
     if (context.captureArtifact) {
       const ref = await context.captureArtifact("screenshot", "post-submit");
+      context.data.artifacts = context.data.artifacts ?? [];
       (context.data.artifacts as unknown[]).push(ref);
     }
 
     if (!waitResult.success) {
-      return { outcome: "failure", error: "Confirmation page did not appear after submit" };
+      return {
+        outcome: "failure",
+        error: "Confirmation page did not appear after submit",
+      };
     }
 
     context.data.submitted = true;

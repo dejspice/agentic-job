@@ -10,7 +10,8 @@
     "clean": "rm -rf dist",
     "test": "node --require tsx/cjs --test src/__tests__/greenhouse-deterministic-resolution.test.ts",
     "test:integration": "node --require tsx/cjs --test src/__tests__/greenhouse-happy-path.integration.test.ts",
-    "test:all": "node --require tsx/cjs --test src/__tests__/greenhouse-deterministic-resolution.test.ts src/__tests__/greenhouse-happy-path.integration.test.ts",
+    "test:robustness": "node --require tsx/cjs --test src/__tests__/greenhouse-robustness.test.ts",
+    "test:all": "node --require tsx/cjs --test src/__tests__/greenhouse-deterministic-resolution.test.ts src/__tests__/greenhouse-happy-path.integration.test.ts src/__tests__/greenhouse-robustness.test.ts",
     "typecheck:test": "tsc --project tsconfig.test.json"
   },
   "dependencies": {

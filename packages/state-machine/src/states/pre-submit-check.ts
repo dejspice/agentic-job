@@ -8,7 +8,7 @@ export const preSubmitCheckState: StateHandler = {
     "All form fields and disclosures are complete. A screenshot of the current page is captured for audit.",
 
   successCriteria:
-    "No inline validation errors remain. All required fields pass a final sweep. If run mode is REVIEW_BEFORE_SUBMIT, the review gate signal has been sent and approval received.",
+    "No inline validation errors remain. All required text/select/textarea fields pass a final sweep. File inputs are excluded from the empty-value check (browser security prevents reading their value in headless mode).",
 
   async execute(context: StateContext): Promise<StateResult> {
     if (!context.execute) {
@@ -30,9 +30,16 @@ export const preSubmitCheckState: StateHandler = {
         required: boolean;
         value: string | null;
         selector: string;
+        type: string;
       }>;
 
-      const emptyRequired = fields.filter((f) => f.required && !f.value);
+      // Exclude file inputs: browser security means a file input's .value is
+      // always an empty string in headless mode even after a successful upload
+      // (setInputFiles).  The resume upload is verified by its own state.
+      const emptyRequired = fields.filter(
+        (f) => f.required && !f.value && f.type !== "file",
+      );
+
       if (emptyRequired.length > 0) {
         return {
           outcome: "failure",
