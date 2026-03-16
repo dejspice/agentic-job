@@ -1,0 +1,12 @@
+Jane Doe
+jane.doe@example.com
+(555) 123-4567
+
+Software Engineer with 5 years of experience in TypeScript and Node.js.
+
+Experience:
+- Senior Software Engineer, TechCorp (2022-present)
+- Software Engineer, StartupXYZ (2020-2022)
+
+Education:
+- B.S. Computer Science, MIT (2020)
