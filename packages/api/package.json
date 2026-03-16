@@ -7,9 +7,17 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js"
   },
   "dependencies": {
-    "@dejsol/core": "*"
+    "@dejsol/core": "*",
+    "@temporalio/client": "^1.15.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0"
   }
 }
