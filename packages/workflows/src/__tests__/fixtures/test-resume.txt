@@ -1,0 +1,15 @@
+Jane Doe
+Senior Software Engineer
+jane.doe@example.com
+(555) 123-4567
+
+EXPERIENCE
+Acme Corp - Software Engineer (2020-2024)
+- Built scalable microservices
+- Led team of 5 engineers
+
+EDUCATION
+B.S. Computer Science - State University (2020)
+
+SKILLS
+TypeScript, Node.js, React, PostgreSQL, Docker

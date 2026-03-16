@@ -3,8 +3,7 @@ import {
   setHandler,
   condition,
 } from "@temporalio/workflow";
-import { StateName, RunMode, RunOutcome, TERMINAL_STATES } from "@dejsol/core";
-import type { AtsType } from "@dejsol/core";
+import { StateName, RunMode, RunOutcome, AtsType, TERMINAL_STATES } from "@dejsol/core";
 
 import {
   emptyBundle,
@@ -30,7 +29,7 @@ import type {
   WorkflowErrorEntry,
 } from "./queries.js";
 
-import type { BrowserActivityResult } from "./activities/index.js";
+import type { BrowserActivityResult, GreenhouseHappyPathResult } from "./activities/index.js";
 import type * as activities from "./activities/index.js";
 
 const TOTAL_STATES = 14;
@@ -74,7 +73,7 @@ export interface ApplyWorkflowResult {
 export async function applyWorkflow(
   input: ApplyWorkflowInput,
 ): Promise<ApplyWorkflowResult> {
-  // Proxy all four activity groups with appropriate timeouts
+  // Proxy standard activities (per-state, short-lived).
   const {
     initActivity,
     browserActivity,
@@ -83,6 +82,13 @@ export async function applyWorkflow(
   } = proxyActivities<typeof activities>({
     startToCloseTimeout: "5m",
     retry: { maximumAttempts: 3 },
+  });
+
+  // Proxy Greenhouse happy-path activity with a longer timeout — it runs
+  // the full browser session (12 states) in a single Temporal activity.
+  const { runGreenhouseHappyPathActivity } = proxyActivities<typeof activities>({
+    startToCloseTimeout: "10m",
+    retry: { maximumAttempts: 2 },
   });
 
   // --- Mutable workflow state ---
@@ -147,6 +153,65 @@ export async function applyWorkflow(
   data = { ...data, ...initResult.data };
   currentState = initResult.nextState;
   phase = "running";
+
+  // --- Greenhouse FULL_AUTO fast-path ---
+  // Execute the entire Greenhouse application in one browser activity rather
+  // than the generic per-state loop.  Session continuity (a live Playwright
+  // page shared across all 12 states) is the reason this must be a single
+  // activity call — Temporal cannot preserve a Playwright Page across
+  // activity boundaries.
+  //
+  // REVIEW_BEFORE_SUBMIT and HUMAN_TAKEOVER fall through to the generic loop
+  // because (a) review mode is out of scope for the current happy path, and
+  // (b) human takeover does not run automation at all.
+  if (input.atsType === AtsType.GREENHOUSE && input.mode === RunMode.FULL_AUTO) {
+    const ghResult: GreenhouseHappyPathResult = await runGreenhouseHappyPathActivity({
+      runId: input.runId,
+      jobId: input.jobId,
+      candidateId: input.candidateId,
+      jobUrl: input.jobUrl,
+      data,
+    });
+
+    // Accumulate completed states.
+    for (const s of ghResult.statesCompleted) {
+      statesCompleted.push(s);
+    }
+
+    // Rebuild the byState index from each artifact's own state field.
+    // The store tags every artifact with its originating StateName.
+    for (const ref of ghResult.artifacts) {
+      mergeArtifacts(bundle, [ref], ref.state);
+    }
+
+    if (ghResult.error) {
+      errors.push({
+        state: ghResult.finalState,
+        message: ghResult.error,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (ghResult.outcome === "escalated") {
+      phase = "escalated";
+      return buildResult(RunOutcome.ESCALATED, ghResult.finalState, statesCompleted, errors, bundle);
+    }
+
+    if (ghResult.outcome === "failure") {
+      phase = "failed";
+      return buildResult(RunOutcome.FAILED, ghResult.finalState, statesCompleted, errors, bundle);
+    }
+
+    phase = "completed";
+    return buildResult(
+      RunOutcome.SUBMITTED,
+      ghResult.finalState,
+      statesCompleted,
+      errors,
+      bundle,
+      ghResult.confirmationId,
+    );
+  }
 
   // --- Phase 2: State-machine-driven execution loop ---
   // Runs from OPEN_JOB_PAGE through PRE_SUBMIT_CHECK.

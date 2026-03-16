@@ -68,6 +68,18 @@ export interface StartRunBody {
   candidateId: string;
   mode: RunMode;
   resumeFile?: string;
+  /**
+   * Job URL passed directly by the caller.
+   * In production the API looks this up from the jobs table via jobId.
+   * Accepted here so tests and direct callers can start a workflow without
+   * requiring a populated database.
+   */
+  jobUrl?: string;
+  /**
+   * ATS type passed directly by the caller.
+   * Same rationale as jobUrl: allows workflow start without a DB lookup.
+   */
+  atsType?: AtsType;
 }
 
 export interface RunListQuery {

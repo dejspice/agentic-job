@@ -115,6 +115,28 @@ export class TemporalClientWrapper {
     return handle.query(QUERY_NAMES.PROGRESS);
   }
 
+  /**
+   * Start an applyWorkflow for the given run.
+   *
+   * Uses the workflow's registered name string to avoid importing the
+   * workflow function (which uses Temporal sandbox primitives) into the
+   * API server process.
+   *
+   * Returns the Temporal workflowId for the started execution.
+   */
+  async startWorkflow(
+    runId: string,
+    input: Record<string, unknown>,
+  ): Promise<string> {
+    const workflowId = getRunWorkflowId(runId);
+    await this.client.workflow.start("applyWorkflow", {
+      taskQueue: TASK_QUEUE,
+      workflowId,
+      args: [input],
+    });
+    return workflowId;
+  }
+
   /** Get the underlying Temporal Client for advanced usage. */
   get raw(): Client {
     return this.client;
