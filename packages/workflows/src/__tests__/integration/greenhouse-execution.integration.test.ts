@@ -402,7 +402,7 @@ describe("persistRunResult — apply_runs update with Greenhouse result", () => 
 
     // Verify persistRunResult can be called without throwing
     // by providing a minimal Prisma stub.
-    const { persistRunResult } = await import("../../../../api/src/persistence.js");
+    const { persistRunResult } = await import("../../../../api/dist/persistence.js");
 
     let updateCalled = false;
     let capturedUpdateArgs: Record<string, unknown> | undefined;
