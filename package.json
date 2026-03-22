@@ -15,12 +15,12 @@
     "db:seed": "tsx scripts/seed-db.ts",
     "build": "tsc -b",
     "clean": "rm -rf packages/*/dist *.tsbuildinfo",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc -b"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "prisma": "^6.0.0",
-    "tsx": "^4.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.5.0"
   },
   "dependencies": {

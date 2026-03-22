@@ -23,29 +23,40 @@ export async function executeExtractFields(
         (globalThis as any).document.querySelectorAll("input, select, textarea"),
       );
 
-      return inputs.map((el: any) => {
-        const id = el.id ? `#${el.id}` : "";
-        const name = el.name ? `[name="${el.name}"]` : "";
-        const selector = id || name || el.tagName.toLowerCase();
+      return inputs
+        .filter((el: any) => {
+          // Skip hidden framework validation shims (e.g. React Select
+          // requiredInput elements) — they are aria-hidden, not interactive,
+          // and have no id/name.  Counting them as real fields causes false
+          // positives in the pre-submit required-field sweep.
+          if (el.getAttribute("aria-hidden") === "true") return false;
+          if (el.tabIndex === -1 && !el.id && !el.name) return false;
+          if (el.type === "hidden") return false;
+          return true;
+        })
+        .map((el: any) => {
+          const id = el.id ? `#${el.id}` : "";
+          const name = el.name ? `[name="${el.name}"]` : "";
+          const selector = id || name || el.tagName.toLowerCase();
 
-        let label: string | null = null;
-        if (el.id) {
-          const labelEl = (globalThis as any).document.querySelector(`label[for="${el.id}"]`);
-          if (labelEl) label = (labelEl.textContent ?? "").trim() || null;
-        }
-        if (!label && el.closest("label")) {
-          label = (el.closest("label").textContent ?? "").trim() || null;
-        }
+          let label: string | null = null;
+          if (el.id) {
+            const labelEl = (globalThis as any).document.querySelector(`label[for="${el.id}"]`);
+            if (labelEl) label = (labelEl.textContent ?? "").trim() || null;
+          }
+          if (!label && el.closest("label")) {
+            label = (el.closest("label").textContent ?? "").trim() || null;
+          }
 
-        return {
-          selector,
-          type: el.type || el.tagName.toLowerCase(),
-          name: el.name || null,
-          label,
-          required: Boolean(el.required),
-          value: el.value || null,
-        };
-      });
+          return {
+            selector,
+            type: el.type || el.tagName.toLowerCase(),
+            name: el.name || null,
+            label,
+            required: Boolean(el.required),
+            value: el.value || null,
+          };
+        });
     },
     );
 

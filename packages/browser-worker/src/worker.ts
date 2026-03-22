@@ -12,6 +12,7 @@ import { executeReadText } from "./commands/read-text.js";
 import { executeWaitFor } from "./commands/wait-for.js";
 import { executeClassifyPage } from "./commands/classify-page.js";
 import { executeExtractFields } from "./commands/extract-fields.js";
+import { executeExtractOptions } from "./commands/extract-options.js";
 
 export class BrowserWorker {
   private readonly page: Page;
@@ -46,6 +47,8 @@ export class BrowserWorker {
         return executeClassifyPage(this.page);
       case "EXTRACT_FIELDS":
         return executeExtractFields(this.page);
+      case "EXTRACT_OPTIONS":
+        return executeExtractOptions(this.page);
       default: {
         const _exhaustive: never = command;
         return {

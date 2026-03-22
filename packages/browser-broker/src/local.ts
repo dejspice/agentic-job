@@ -30,7 +30,11 @@ export async function allocateLocalSession(
   const headless = requirements.headless ?? true;
 
   try {
-    const browser = await chromium.launch({ headless });
+    const slowMo = requirements.slowMo ?? 0;
+    const browser = await chromium.launch({
+      headless,
+      ...(slowMo > 0 ? { slowMo } : {}),
+    });
     const context = await browser.newContext();
     const page = await context.newPage();
 

@@ -24,6 +24,26 @@ export type {
 } from "./validation-watcher.js";
 
 export {
+  matchScreeningQuestion,
+  SCREENING_RULES,
+} from "./screening/deterministic-rules.js";
+
+export type {
+  ScreeningRule,
+  QuestionInteraction,
+  MatchResult,
+  NoMatchResult,
+  RuleMatchOutcome,
+} from "./screening/deterministic-rules.js";
+
+export {
+  scoreOption,
+  pickBestOption,
+} from "./screening/option-matcher.js";
+
+export type { OptionCandidate } from "./screening/option-matcher.js";
+
+export {
   initState,
   openJobPageState,
   detectApplyEntryState,

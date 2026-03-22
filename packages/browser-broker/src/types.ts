@@ -18,6 +18,13 @@ export interface SessionRequirements {
    * Useful for debugging live-target runs.
    */
   headless?: boolean;
+  /**
+   * Milliseconds to slow down every Playwright action (click, type, navigate, etc.).
+   * Adds a human-like cadence that reduces anti-bot / verification triggers on
+   * ATS platforms like Greenhouse.  0 = no slowdown (default for tests).
+   * Recommended: 80–150ms for live runs.
+   */
+  slowMo?: number;
 }
 
 export interface AllocatedSession {

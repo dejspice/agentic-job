@@ -1,0 +1,245 @@
+/**
+ * Deterministic screening-question answer engine.
+ *
+ * Table-driven: each rule declares a label pattern (regex tested against
+ * the normalized question text) and a resolution strategy — either a fixed
+ * literal value or a dot-path into the candidate data bag.
+ *
+ * Rules are evaluated in declaration order; first match wins.
+ *
+ * This module intentionally does NOT call the intelligence package.
+ * Unknown questions produce a "no_match" result so callers can decide
+ * whether to skip, escalate, or defer to an LLM layer later.
+ */
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type QuestionInteraction = "text" | "react-select";
+
+export interface ScreeningRule {
+  /** Human-readable name for logging / test assertions. */
+  name: string;
+  /** Regex tested against the lowercased, whitespace-collapsed label. */
+  pattern: RegExp;
+  /** How to resolve the answer value. */
+  answer:
+    | { kind: "literal"; value: string }
+    | { kind: "dataKey"; path: string; fallback?: string };
+  /** How to interact with the field on the page. */
+  interaction: QuestionInteraction;
+  /**
+   * Optional short search string to type into React Select's filter.
+   * When present, this is typed instead of the full answer value so that
+   * React Select's contains-filter reliably shows matching options.
+   * Resolved from the data bag if prefixed with "dataKey:", otherwise literal.
+   */
+  searchSeed?: string;
+}
+
+export interface MatchResult {
+  matched: true;
+  rule: ScreeningRule;
+  value: string;
+}
+
+export interface NoMatchResult {
+  matched: false;
+  label: string;
+}
+
+export type RuleMatchOutcome = MatchResult | NoMatchResult;
+
+// ---------------------------------------------------------------------------
+// Rule table
+// ---------------------------------------------------------------------------
+
+export const SCREENING_RULES: readonly ScreeningRule[] = [
+  // ── LinkedIn ──────────────────────────────────────────────────────────
+  {
+    name: "linkedin_profile",
+    pattern: /linkedin/i,
+    answer: { kind: "dataKey", path: "candidate.linkedin", fallback: "N/A" },
+    interaction: "text",
+  },
+
+  // ── Visa / sponsorship ────────────────────────────────────────────────
+  {
+    name: "visa_sponsorship",
+    pattern: /visa\s*sponsor|require.*sponsor|need.*sponsor|sponsor.*visa/i,
+    answer: { kind: "dataKey", path: "candidate.requireSponsorship", fallback: "No" },
+    interaction: "react-select",
+  },
+
+  // ── Work authorization ────────────────────────────────────────────────
+  {
+    name: "work_authorization",
+    pattern: /authorized?\s*(to\s*)?work|legally\s*work|eligible\s*to\s*work|work\s*authori/i,
+    answer: { kind: "dataKey", path: "candidate.authorizedToWork", fallback: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── How long / years of experience in role ────────────────────────────
+  // Must come BEFORE "previously worked as" — both can appear in the same
+  // question text ("For how long have you previously worked as ..."), and
+  // "how long" is the more specific signal.
+  {
+    name: "experience_duration",
+    pattern: /how\s*long\s*have\s*you|years?\s*of\s*experience|how\s*many\s*years|length\s*of.*experience|for\s*how\s*long/i,
+    answer: { kind: "dataKey", path: "candidate.experienceDuration", fallback: "5+ years" },
+    interaction: "react-select",
+    searchSeed: "10",
+  },
+
+  // ── Previously worked as <role> ───────────────────────────────────────
+  {
+    name: "previously_worked_as",
+    pattern: /have\s*you\s*(ever\s*)?previously\s*worked|previously\s*worked\s*as|prior\s*experience\s*as|have\s*you\s*(ever\s*)?worked\s*as/i,
+    answer: { kind: "dataKey", path: "candidate.previouslyWorkedAsRole", fallback: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Industry/domain experience (freeform text) ────────────────────────
+  // Must come BEFORE industry_career — labels containing "possess" + "industry"
+  // + "experience" are freeform text questions, not dropdown selectors.
+  {
+    name: "industry_experience_text",
+    pattern: /possess.*experience|fintech.*experience|payments.*experience/i,
+    answer: { kind: "dataKey", path: "candidate.industryExperience", fallback: "Yes, 8 years in SaaS and fintech." },
+    interaction: "text",
+  },
+
+  // ── Industry / career domain ──────────────────────────────────────────
+  {
+    name: "industry_career",
+    pattern: /which.*industry|best\s*describes.*industry|career\s*in$|analytics\s*career|professional\s*background/i,
+    answer: { kind: "dataKey", path: "candidate.industry", fallback: "SaaS / Software" },
+    interaction: "react-select",
+    searchSeed: "B2B",
+  },
+
+  // ── Scope / level of analytics work ───────────────────────────────────
+  {
+    name: "analytics_scope",
+    pattern: /scope\s*of.*analytics|analytics\s*work|level\s*of.*analytics/i,
+    answer: { kind: "dataKey", path: "candidate.analyticsScope", fallback: "Defining KPIs and building analytics frameworks" },
+    interaction: "react-select",
+    searchSeed: "KPI",
+  },
+
+  // ── Python / R / technical skill proficiency ──────────────────────────
+  {
+    name: "python_r_experience",
+    pattern: /python|(\br\b).*data\s*analysis|programming.*data|coding.*analytics/i,
+    answer: { kind: "dataKey", path: "candidate.pythonExperience", fallback: "I use Python or R regularly for data analysis" },
+    interaction: "react-select",
+    searchSeed: "regularly",
+  },
+
+  // ── Portfolio / case studies ───────────────────────────────────────────
+  {
+    name: "portfolio_case_studies",
+    pattern: /portfolio|case\s*stud|work\s*sample|share.*during.*interview/i,
+    answer: { kind: "dataKey", path: "candidate.hasPortfolio", fallback: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Worked at this company before ─────────────────────────────────────
+  {
+    name: "worked_here_before",
+    pattern: /previously\s*employed|worked\s*.*before|former\s*employee/i,
+    answer: { kind: "dataKey", path: "candidate.workedHereBefore", fallback: "No" },
+    interaction: "react-select",
+  },
+
+  // ── Willing to relocate ───────────────────────────────────────────────
+  {
+    name: "willing_to_relocate",
+    pattern: /willing\s*to\s*relocate|open\s*to\s*relocation/i,
+    answer: { kind: "dataKey", path: "candidate.willingToRelocate", fallback: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Salary expectation ────────────────────────────────────────────────
+  {
+    name: "salary_expectation",
+    pattern: /salary|compensation|pay\s*expectation|desired\s*pay/i,
+    answer: { kind: "dataKey", path: "candidate.salaryRange", fallback: "$120,000 - $140,000" },
+    interaction: "text",
+  },
+
+  // ── US State of residence ─────────────────────────────────────────────
+  {
+    name: "us_state_residence",
+    pattern: /which\s*(us\s*)?state|state.*reside|state.*live|current\s*state/i,
+    answer: { kind: "dataKey", path: "candidate.state", fallback: "Texas" },
+    interaction: "text",
+  },
+
+  // ── Open to hybrid / remote+office ────────────────────────────────────
+  {
+    name: "open_to_hybrid",
+    pattern: /open\s*to.*hybrid|remote.*hybrid|flexible.*hybrid|hybrid.*working/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Open to occasional travel / in-person ─────────────────────────────
+  {
+    name: "open_to_travel",
+    pattern: /open\s*to.*travel|occasional\s*travel|in-person\s*collaborat/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+];
+
+// ---------------------------------------------------------------------------
+// Matcher
+// ---------------------------------------------------------------------------
+
+function normalize(label: string): string {
+  return label.toLowerCase().replace(/\s+/g, " ").replace(/[*:?]+$/, "").trim();
+}
+
+function resolveDataKey(
+  data: Record<string, unknown>,
+  dotPath: string,
+): string | undefined {
+  const parts = dotPath.split(".");
+  let current: unknown = data;
+  for (const part of parts) {
+    if (current == null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return typeof current === "string" ? current : undefined;
+}
+
+/**
+ * Match a question label against the deterministic rule table.
+ *
+ * Returns the resolved answer value on match, or a no_match signal with the
+ * original label so the caller can log / escalate.
+ */
+export function matchScreeningQuestion(
+  label: string,
+  data: Record<string, unknown>,
+  rules: readonly ScreeningRule[] = SCREENING_RULES,
+): RuleMatchOutcome {
+  const norm = normalize(label);
+
+  for (const rule of rules) {
+    if (rule.pattern.test(norm)) {
+      let value: string;
+      if (rule.answer.kind === "literal") {
+        value = rule.answer.value;
+      } else {
+        value = resolveDataKey(data, rule.answer.path) ?? rule.answer.fallback ?? "";
+      }
+      return { matched: true, rule, value };
+    }
+  }
+
+  return { matched: false, label };
+}

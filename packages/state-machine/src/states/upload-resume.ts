@@ -17,7 +17,19 @@ const GREENHOUSE_RESUME_SELECTORS: readonly string[] = [
   'input[type="file"][id*="cv"]',
   'input[type="file"][name*="cv"]',
   'input[type="file"][class*="resume"]',
-  'input[type="file"]', // last resort — first file input on the page
+  'input[type="file"]',
+];
+
+/**
+ * Selectors that indicate a resume file was successfully uploaded.
+ * Greenhouse replaces the upload buttons with a file name display.
+ */
+const GREENHOUSE_UPLOAD_CONFIRMATION_SELECTORS: readonly string[] = [
+  '.chosen-file',
+  '[data-file-name]',
+  '.uploaded-filename',
+  '.attachment-filename',
+  'a[download]',
 ];
 
 export const uploadResumeState: StateHandler = {
@@ -60,9 +72,6 @@ export const uploadResumeState: StateHandler = {
     }
 
     // Step 2: Resolve the best matching specific selector via fast presence checks.
-    // This fixes the prior logic bug where WAIT_FOR used the full combined selector
-    // but UPLOAD only tried the first (id*="resume") selector, silently failing on
-    // boards that use name*="resume" or other patterns.
     let resolvedSelector = GREENHOUSE_RESUME_SELECTORS[GREENHOUSE_RESUME_SELECTORS.length - 1]!;
 
     for (const sel of GREENHOUSE_RESUME_SELECTORS.slice(0, -1)) {
@@ -77,11 +86,23 @@ export const uploadResumeState: StateHandler = {
       }
     }
 
-    // Step 3: Upload using the resolved selector.
+    // Step 3: Upload via the filechooser pattern (ported from apply_agent.py).
+    // Click the Resume section's "Attach" button → intercept the native file
+    // dialog → set the file.  This is the only approach that reliably registers
+    // uploads on React-managed Greenhouse boards.  Falls back to direct
+    // setInputFiles if no trigger button is found.
+    const triggerSelector = '[aria-labelledby="upload-label-resume"] button:has-text("Attach")';
+    const triggerCheck = await context.execute({
+      type: "WAIT_FOR",
+      target: triggerSelector,
+      timeoutMs: 2000,
+    });
+
     const uploadResult = await context.execute({
       type: "UPLOAD",
       selector: resolvedSelector,
       filePath: resumePath,
+      ...(triggerCheck.success ? { triggerSelector } : {}),
     });
 
     if (!uploadResult.success) {
@@ -94,6 +115,18 @@ export const uploadResumeState: StateHandler = {
         outcome: "failure",
         error: uploadResult.error ?? "Resume upload failed",
       };
+    }
+
+    // Step 4: Verify the upload was processed by the ATS (Greenhouse replaces
+    // upload buttons with a file name display when successful).
+    const confirmationSelector = GREENHOUSE_UPLOAD_CONFIRMATION_SELECTORS.join(", ");
+    const confirmResult = await context.execute({
+      type: "WAIT_FOR",
+      target: confirmationSelector,
+      timeoutMs: 5000,
+    });
+    if (!confirmResult.success) {
+      context.data.uploadConfirmationMissing = true;
     }
 
     if (context.captureArtifact) {

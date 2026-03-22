@@ -17,6 +17,12 @@ interface GreenhouseFieldDef {
    * Phone is optional on many Greenhouse boards.
    */
   required: boolean;
+  /**
+   * When "react-select", the field is a React Select dropdown. Filling
+   * requires clicking the control, typing the value, then pressing Enter
+   * to select the matching option.
+   */
+  interaction?: "type" | "react-select";
 }
 
 /**
@@ -67,7 +73,28 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
       'input[name*="phone"]',
     ],
     dataKey: "candidate.phone",
-    required: false, // Phone is optional on many Greenhouse boards.
+    required: false,
+  },
+  {
+    selectors: [
+      "#country",
+      'input[id="country"]',
+      'input[name*="country"]',
+    ],
+    dataKey: "candidate.country",
+    required: false,
+    interaction: "react-select",
+  },
+  {
+    selectors: [
+      "#candidate-location",
+      "#job_application_location",
+      'input[role="combobox"][id*="location"]',
+      'input[id*="location"]',
+    ],
+    dataKey: "candidate.location",
+    required: false,
+    interaction: "react-select",
   },
 ];
 
@@ -118,7 +145,6 @@ export const fillRequiredFieldsState: StateHandler = {
         continue;
       }
 
-      // Try each selector in priority order using a fast presence check.
       let filled = false;
 
       for (const selector of field.selectors) {
@@ -129,17 +155,70 @@ export const fillRequiredFieldsState: StateHandler = {
         });
         if (!checkResult.success) continue;
 
-        const typeResult = await context.execute({
-          type: "TYPE",
-          selector,
-          value,
-          clearFirst: true,
-        });
+        if (field.interaction === "react-select") {
+          // React Select / combobox interaction ported from apply_agent.py:
+          // 1. Click to open the dropdown
+          // 2. Type sequentially (char by char) to trigger filtering
+          // 3. Wait for dropdown options to appear
+          // 4. Click the first matching option (fallback: ArrowDown + Enter)
+          const clickResult = await context.execute({
+            type: "CLICK",
+            target: { kind: "css", value: selector },
+          });
+          if (!clickResult.success) continue;
 
-        if (typeResult.success) {
+          const typeResult = await context.execute({
+            type: "TYPE",
+            selector,
+            value,
+            sequential: true,
+          });
+          if (!typeResult.success) continue;
+
+          // Wait for dropdown option suggestions to appear.
+          // Includes React Select, ARIA options, and Google Places autocomplete
+          // selectors (ported from apply_agent.py OPTION_SELECTORS).
+          const OPTION_SELECTORS = [
+            "[id*='-option-']",
+            "[role='option']",
+            ".select__option",
+            ".pac-item",
+            "[class*='suggestion']",
+            "[class*='autocomplete'] li",
+          ];
+          let optionClicked = false;
+          for (const optSel of OPTION_SELECTORS) {
+            const optWait = await context.execute({
+              type: "WAIT_FOR",
+              target: optSel,
+              timeoutMs: 3000,
+            });
+            if (optWait.success) {
+              await context.execute({
+                type: "CLICK",
+                target: { kind: "css", value: optSel },
+              });
+              optionClicked = true;
+              break;
+            }
+          }
+
           filledFields.push(selector);
           filled = true;
           break;
+        } else {
+          const typeResult = await context.execute({
+            type: "TYPE",
+            selector,
+            value,
+            clearFirst: true,
+          });
+
+          if (typeResult.success) {
+            filledFields.push(selector);
+            filled = true;
+            break;
+          }
         }
       }
 
