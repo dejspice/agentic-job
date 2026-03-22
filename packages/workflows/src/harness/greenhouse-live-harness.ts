@@ -93,6 +93,21 @@ export interface HarnessConfig {
     lastName: string;
     email: string;
     phone?: string;
+    country?: string;
+    location?: string;
+    linkedin?: string;
+    requireSponsorship?: string;
+    authorizedToWork?: string;
+    previouslyWorkedAsRole?: string;
+    experienceDuration?: string;
+    industry?: string;
+    analyticsScope?: string;
+    pythonExperience?: string;
+    hasPortfolio?: string;
+    workedHereBefore?: string;
+    salaryRange?: string;
+    state?: string;
+    industryExperience?: string;
   };
   /** Browser provider to use for session allocation. */
   provider: RuntimeProvider;
@@ -102,6 +117,10 @@ export interface HarnessConfig {
   artifactDir: string;
   /** Run identifier for trace correlation. */
   runId: string;
+  /** Playwright slowMo in ms — adds delay to every browser action. 0 = off. */
+  slowMo: number;
+  /** Milliseconds to pause before clicking the submit button. */
+  preSubmitDwellMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +186,21 @@ export function loadHarnessConfig(): HarnessConfig | null {
       lastName: lastName!,
       email: email!,
       phone: process.env["GREENHOUSE_PHONE"]?.trim() || undefined,
+      country: process.env["GREENHOUSE_COUNTRY"]?.trim() || "United States",
+      location: process.env["GREENHOUSE_LOCATION"]?.trim() || "Arlington",
+      linkedin: process.env["GREENHOUSE_LINKEDIN"]?.trim() || "N/A",
+      requireSponsorship: "No",
+      authorizedToWork: "Yes",
+      previouslyWorkedAsRole: "Yes",
+      experienceDuration: "5+ years",
+      industry: "SaaS / Software",
+      analyticsScope: "Defining KPIs and building analytics frameworks",
+      pythonExperience: "I use Python or R regularly for data analysis",
+      hasPortfolio: "Yes",
+      workedHereBefore: "No",
+      salaryRange: "$120,000 - $140,000",
+      state: process.env["GREENHOUSE_STATE"]?.trim() || "Texas",
+      industryExperience: "Yes, 8 years in SaaS and fintech.",
     },
     provider,
     headless: process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false",
@@ -174,6 +208,8 @@ export function loadHarnessConfig(): HarnessConfig | null {
       process.env["GREENHOUSE_ARTIFACT_DIR"]?.trim() || "./artifacts-live",
     ),
     runId: process.env["GREENHOUSE_RUN_ID"]?.trim() || randomUUID(),
+    slowMo: parseInt(process.env["BROWSER_SLOW_MO_MS"] ?? "100", 10),
+    preSubmitDwellMs: parseInt(process.env["PRE_SUBMIT_DWELL_MS"] ?? "2000", 10),
   };
 }
 
@@ -190,18 +226,20 @@ export function loadHarnessConfig(): HarnessConfig | null {
  * Returns true on success, false on failure.
  */
 export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
-  const { targetUrl, resumePath, candidate, provider, headless, artifactDir, runId } = config;
+  const { targetUrl, resumePath, candidate, provider, headless, artifactDir, runId, slowMo, preSubmitDwellMs } = config;
 
   console.log("\n[greenhouse-live] ─────────────────────────────────");
   console.log(`[greenhouse-live] Run ID    : ${runId}`);
   console.log(`[greenhouse-live] Target URL: ${targetUrl}`);
   console.log(`[greenhouse-live] Provider  : ${provider}`);
   console.log(`[greenhouse-live] Headless  : ${headless}`);
+  console.log(`[greenhouse-live] Slow-mo   : ${slowMo}ms`);
+  console.log(`[greenhouse-live] Pre-submit: ${preSubmitDwellMs}ms`);
   console.log(`[greenhouse-live] Artifact  : ${artifactDir}/${runId}/`);
   console.log("[greenhouse-live] ─────────────────────────────────\n");
 
   const broker = new BrowserBroker();
-  const requirements: SessionRequirements = { provider, headless };
+  const requirements: SessionRequirements = { provider, headless, slowMo };
   let session: AllocatedSession | undefined;
 
   try {
@@ -211,14 +249,19 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
 
     const store = new LocalFileArtifactStore(artifactDir);
 
+    const candidateBag: Record<string, string> = {
+      firstName: candidate.firstName,
+      lastName: candidate.lastName,
+      email: candidate.email,
+    };
+    for (const [k, v] of Object.entries(candidate)) {
+      if (v && !candidateBag[k]) candidateBag[k] = v;
+    }
+
     const data: Record<string, unknown> = {
       resumeFile: resumePath,
-      candidate: {
-        firstName: candidate.firstName,
-        lastName: candidate.lastName,
-        email: candidate.email,
-        ...(candidate.phone ? { phone: candidate.phone } : {}),
-      },
+      candidate: candidateBag,
+      preSubmitDwellMs,
     };
 
     console.log("[greenhouse-live] Starting state-machine execution…\n");

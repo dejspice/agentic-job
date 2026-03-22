@@ -1,9 +1,15 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
     "outDir": "dist",
     "rootDir": "src"
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/__tests__", "node_modules", "dist"]
+  "exclude": ["src/**/*.test.ts", "src/__tests__", "node_modules", "dist"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../browser-worker" },
+    { "path": "../state-machine" }
+  ]
 }

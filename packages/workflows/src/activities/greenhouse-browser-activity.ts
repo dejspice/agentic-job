@@ -67,10 +67,12 @@ const GREENHOUSE_BROWSER_STATES: ReadonlyArray<StateName> = [
   StateName.OPEN_JOB_PAGE,
   StateName.DETECT_APPLY_ENTRY,
   StateName.LOGIN_OR_CONTINUE,          // no-op — no login wall on Greenhouse public boards
-  StateName.UPLOAD_RESUME,
-  StateName.WAIT_FOR_PARSE,
+  StateName.WAIT_FOR_PARSE,             // succeeds with parseTimedOut if resume not yet uploaded
   StateName.VALIDATE_PARSED_PROFILE,    // no-op — stub; mismatch detection is a later phase
   StateName.FILL_REQUIRED_FIELDS,
+  // Resume upload moved AFTER field fills — React Select combobox interactions
+  // (e.g. Location) trigger re-renders that clear the file upload widget.
+  StateName.UPLOAD_RESUME,
   StateName.ANSWER_SCREENING_QUESTIONS, // no-op — answer bank integration is a later phase
   StateName.REVIEW_DISCLOSURES,         // no-op — EEOC/disclosure automation is a later phase
   StateName.PRE_SUBMIT_CHECK,
@@ -195,6 +197,18 @@ export async function executeGreenhouseHappyPath({
   // Execute each state in sequence within the shared browser session.
   for (const stateName of GREENHOUSE_BROWSER_STATES) {
     stateContext.currentState = stateName;
+
+    // Pre-submit dwell: pause before SUBMIT to mimic human review behavior
+    // and reduce anti-bot trigger risk.  Configured via preSubmitDwellMs in
+    // the data bag (set by the harness from PRE_SUBMIT_DWELL_MS env var).
+    if (stateName === StateName.SUBMIT) {
+      const dwellMs = typeof stateContext.data.preSubmitDwellMs === "number"
+        ? stateContext.data.preSubmitDwellMs
+        : 0;
+      if (dwellMs > 0) {
+        await page.waitForTimeout(dwellMs);
+      }
+    }
 
     let stateResult;
     try {
