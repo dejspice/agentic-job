@@ -120,14 +120,18 @@ async function fillEeoDropdown(
   // the menu.  The control is a sibling of the hidden combobox input inside
   // the React Select container.  This avoids the scroll/click/type dance
   // that the TYPE sequential path triggers on the hidden input.
-  // Try clicking the visible .select__control box first.
-  // Then fall back to a label-for click, then the input itself.
+  // Click the visible .select__control box to open the dropdown menu.
+  // The DOM structure is: label[for=id] ~ .select-shell ... .select__control
   // Never use TYPE sequential — that triggers scrollIntoView thrashing.
-  const controlSelector = `[aria-labelledby="${questionId}-label"] .select__control`;
-  const labelSelector = `label[for="${questionId}"]`;
+  const controlSelectors = [
+    `label[for="${questionId}"] ~ .select-shell .select__control`,
+    `#${questionId}-label ~ .select-shell .select__control`,
+    `[aria-labelledby="${questionId}-label"] .select__control`,
+    selector,
+  ];
 
   let opened = false;
-  for (const clickTarget of [controlSelector, labelSelector, selector]) {
+  for (const clickTarget of controlSelectors) {
     const exists = await context.execute({
       type: "WAIT_FOR",
       target: clickTarget,
