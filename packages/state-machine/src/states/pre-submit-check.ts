@@ -31,13 +31,16 @@ export const preSubmitCheckState: StateHandler = {
         value: string | null;
         selector: string;
         type: string;
+        role: string | null;
       }>;
 
-      // Exclude file inputs: browser security means a file input's .value is
-      // always an empty string in headless mode even after a successful upload
-      // (setInputFiles).  The resume upload is verified by its own state.
+      // Exclude from empty-required sweep:
+      // - file inputs: browser security means .value is always empty after upload
+      // - combobox inputs (role="combobox"): React Select manages selection
+      //   state in React, not in the DOM input value.  The input is always
+      //   empty even when an option is selected.
       const emptyRequired = fields.filter(
-        (f) => f.required && !f.value && f.type !== "file",
+        (f) => f.required && !f.value && f.type !== "file" && f.role !== "combobox",
       );
 
       if (emptyRequired.length > 0) {

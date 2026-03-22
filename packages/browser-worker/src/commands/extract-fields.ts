@@ -48,20 +48,32 @@ export async function executeExtractFields(
             label = (el.closest("label").textContent ?? "").trim() || null;
           }
 
+          const role = el.getAttribute("role") || null;
+
+          // React Select combobox inputs always have empty .value even when
+          // an option is selected (React manages the state, not the DOM).
+          // Try to read the selected value from the .select__single-value
+          // sibling; fall back to the raw el.value.
+          let fieldValue = el.value || null;
+          if (role === "combobox" && !fieldValue) {
+            const container = el.closest(".select__input-container")
+              ?? el.closest("[class*='select']");
+            const singleValue = container
+              ?.parentElement?.querySelector(".select__single-value")
+              ?? container?.closest("[class*='container']")?.querySelector(".select__single-value");
+            if (singleValue) {
+              fieldValue = (singleValue.textContent ?? "").trim() || null;
+            }
+          }
+
           return {
             selector,
             type: el.type || el.tagName.toLowerCase(),
+            role,
             name: el.name || null,
             label,
             required: Boolean(el.required) || el.getAttribute("aria-required") === "true",
-            value: el.value
-              // React Select combobox inputs always have empty .value even
-              // when an option is selected.  Check for a sibling
-              // .select__single-value element to get the actual selection.
-              || (el.getAttribute("role") === "combobox" && el.closest(".select__input-container")
-                  ?.parentElement?.querySelector(".select__single-value")
-                  ?.textContent?.trim())
-              || null,
+            value: fieldValue,
           };
         });
     },
