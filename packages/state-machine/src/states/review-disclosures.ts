@@ -55,37 +55,31 @@ const CUSTOM_EEO_PATTERNS: ReadonlyArray<{
   pattern: RegExp;
   dataKey: string;
   fallback: string;
-  searchSeed: string;
 }> = [
   {
     pattern: /gender\s*identity|describe.*gender/i,
     dataKey: "candidate.gender",
-    fallback: "I don't wish to answer",
-    searchSeed: "wish",
+    fallback: "Male",
   },
   {
     pattern: /race.*ethnicity|ethnicity.*race|racial.*background|describe.*racial/i,
     dataKey: "candidate.raceEthnicity",
-    fallback: "I don't wish to answer",
-    searchSeed: "wish",
+    fallback: "Asian",
   },
   {
     pattern: /military\s*status|armed\s*forces/i,
     dataKey: "candidate.veteranStatus",
     fallback: "I am not a protected veteran",
-    searchSeed: "not a protected",
   },
   {
     pattern: /disability\s*status|substantially\s*limits/i,
     dataKey: "candidate.disabilityStatus",
-    fallback: "No, I do not have a disability",
-    searchSeed: "do not have",
+    fallback: "No, I do not have a disability and have not had one in the past",
   },
   {
     pattern: /lgbtq|sexual\s*orientation/i,
-    dataKey: "",
-    fallback: "I don't wish to answer",
-    searchSeed: "wish",
+    dataKey: "candidate.lgbtq",
+    fallback: "Decline to self-identify",
   },
 ];
 
@@ -106,24 +100,48 @@ function resolveDataKey(data: Record<string, unknown>, dotPath: string): string 
 
 /**
  * Fill a React Select EEO dropdown.
- * Opens the dropdown, reads all visible options, scores against the desired
- * value, clicks the best match.  Falls back to first option if no match.
+ *
+ * Clicks the visible .select__control wrapper (not the hidden input) to open
+ * the dropdown without triggering scroll-into-view on the input element.
+ * Then reads all visible options, scores against the desired value, and
+ * clicks the best match by its stable React Select option ID.
  */
 async function fillEeoDropdown(
   context: StateContext,
   selector: string,
   desiredValue: string,
-  searchSeed: string,
+  _searchSeed: string,
 ): Promise<boolean> {
   if (!context.execute) return false;
 
   const questionId = selector.replace(/^#/, "");
 
-  // Click to focus + type seed to open dropdown
-  await context.execute({ type: "CLICK", target: { kind: "css", value: selector } });
-  await context.execute({ type: "TYPE", selector, value: searchSeed, sequential: true });
+  // Click the visible dropdown control (the box the user sees) to open
+  // the menu.  The control is a sibling of the hidden combobox input inside
+  // the React Select container.  This avoids the scroll/click/type dance
+  // that the TYPE sequential path triggers on the hidden input.
+  // Try clicking the visible .select__control box first.
+  // Then fall back to a label-for click, then the input itself.
+  // Never use TYPE sequential — that triggers scrollIntoView thrashing.
+  const controlSelector = `[aria-labelledby="${questionId}-label"] .select__control`;
+  const labelSelector = `label[for="${questionId}"]`;
 
-  // Wait for options
+  let opened = false;
+  for (const clickTarget of [controlSelector, labelSelector, selector]) {
+    const exists = await context.execute({
+      type: "WAIT_FOR",
+      target: clickTarget,
+      timeoutMs: 300,
+    });
+    if (exists.success) {
+      await context.execute({ type: "CLICK", target: { kind: "css", value: clickTarget } });
+      opened = true;
+      break;
+    }
+  }
+  if (!opened) return false;
+
+  // Wait for options to render
   const firstOptSelector = `#react-select-${questionId}-option-0`;
   const optWait = await context.execute({
     type: "WAIT_FOR",
@@ -132,7 +150,7 @@ async function fillEeoDropdown(
   });
   if (!optWait.success) return false;
 
-  // Extract all visible options
+  // Extract all visible options in a single browser round-trip
   const extractResult = await context.execute({ type: "EXTRACT_OPTIONS" });
   const optionLabels = extractResult.success
     ? ((extractResult.data as Record<string, unknown>)?.options as string[] ?? [])
@@ -147,7 +165,7 @@ async function fillEeoDropdown(
     }
   }
 
-  // Fallback: click first option
+  // Fallback: click first visible option
   await context.execute({ type: "CLICK", target: { kind: "css", value: firstOptSelector } });
   return true;
 }
@@ -225,7 +243,7 @@ export const reviewDisclosuresState: StateHandler = {
         const desiredValue =
           resolveDataKey(context.data, match.dataKey) ?? match.fallback;
 
-        const ok = await fillEeoDropdown(context, field.selector, desiredValue, match.searchSeed);
+        const ok = await fillEeoDropdown(context, field.selector, desiredValue, "");
         if (ok) filled.push(label);
         else skipped.push(label);
       }
