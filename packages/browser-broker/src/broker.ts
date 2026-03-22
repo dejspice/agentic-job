@@ -8,12 +8,14 @@ import {
 } from "./types.js";
 import { brightDataConnector } from "./bright-data.js";
 import { browserbaseConnector } from "./browserbase.js";
+import { localConnector } from "./local.js";
 
 const DEFAULT_PROVIDER = RuntimeProvider.BRIGHT_DATA;
 
 const connectors: Record<RuntimeProvider, ProviderConnector> = {
   [RuntimeProvider.BRIGHT_DATA]: brightDataConnector,
   [RuntimeProvider.BROWSERBASE]: browserbaseConnector,
+  [RuntimeProvider.LOCAL]: localConnector,
 };
 
 export class BrowserBroker {

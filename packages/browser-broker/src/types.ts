@@ -3,6 +3,8 @@ import type { Browser, BrowserContext, Page } from "playwright";
 export enum RuntimeProvider {
   BRIGHT_DATA = "bright_data",
   BROWSERBASE = "browserbase",
+  /** Local Chromium launch — no credentials required. For dev and harness runs. */
+  LOCAL = "local",
 }
 
 export interface SessionRequirements {
@@ -10,6 +12,12 @@ export interface SessionRequirements {
   geo?: string;
   timeoutMs?: number;
   tags?: Record<string, string>;
+  /**
+   * When true the browser window is visible.
+   * Only honoured by the LOCAL provider — remote providers are always headless.
+   * Useful for debugging live-target runs.
+   */
+  headless?: boolean;
 }
 
 export interface AllocatedSession {

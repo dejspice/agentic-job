@@ -40,6 +40,7 @@ export {
   submitActivity,
   captureActivity,
   runGreenhouseHappyPathActivity,
+  executeGreenhouseHappyPath,
 } from "./activities/index.js";
 export type {
   InitActivityInput,

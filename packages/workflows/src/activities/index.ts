@@ -19,7 +19,10 @@ export type {
   CaptureActivityResult,
 } from "./capture-activity.js";
 
-export { runGreenhouseHappyPathActivity } from "./greenhouse-browser-activity.js";
+export {
+  runGreenhouseHappyPathActivity,
+  executeGreenhouseHappyPath,
+} from "./greenhouse-browser-activity.js";
 export type {
   GreenhouseHappyPathInput,
   GreenhouseHappyPathResult,
