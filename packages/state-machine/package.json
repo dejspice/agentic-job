@@ -14,6 +14,7 @@
     "typecheck:test": "tsc --project tsconfig.test.json"
   },
   "dependencies": {
-    "@dejsol/core": "*"
+    "@dejsol/core": "*",
+    "@dejsol/intelligence": "*"
   }
 }

@@ -6,6 +6,7 @@ import {
   type RuleMatchOutcome,
 } from "../screening/deterministic-rules.js";
 import { pickBestOption } from "../screening/option-matcher.js";
+import type { AnswerGeneratorService } from "@dejsol/intelligence";
 
 /**
  * Selectors for visible React Select dropdown options, in priority order.
@@ -176,6 +177,36 @@ export const answerScreeningQuestionsState: StateHandler = {
 
 
       if (!match.matched) {
+        // ── LLM fallback for unmatched required freeform questions ──────
+        // Deterministic-first: we only reach here when NO rule matched.
+        // If an AnswerGeneratorService is wired in the data bag, use it
+        // to generate a concise answer for this required question.
+        const answerGen = context.data.answerGenerator as AnswerGeneratorService | undefined;
+        if (answerGen && q.required) {
+          const generated = await answerGen.generate(
+            {
+              question: q.label,
+              fieldType: q.type as "text" | "textarea" | "select" | "radio" | "checkbox",
+              jobTitle: context.data.jobTitle as string | undefined,
+              company: context.data.company as string | undefined,
+              maxLength: 500,
+            },
+            {},
+            undefined,
+          );
+          if (generated) {
+            const typeResult = await context.execute({
+              type: "TYPE",
+              selector: q.selector,
+              value: generated.answer,
+              sequential: true,
+            });
+            if (typeResult.success) {
+              answered.push(q.label);
+              continue;
+            }
+          }
+        }
         skipped.push(q.label);
         continue;
       }

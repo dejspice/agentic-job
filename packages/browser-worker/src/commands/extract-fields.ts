@@ -53,8 +53,15 @@ export async function executeExtractFields(
             type: el.type || el.tagName.toLowerCase(),
             name: el.name || null,
             label,
-            required: Boolean(el.required),
-            value: el.value || null,
+            required: Boolean(el.required) || el.getAttribute("aria-required") === "true",
+            value: el.value
+              // React Select combobox inputs always have empty .value even
+              // when an option is selected.  Check for a sibling
+              // .select__single-value element to get the actual selection.
+              || (el.getAttribute("role") === "combobox" && el.closest(".select__input-container")
+                  ?.parentElement?.querySelector(".select__single-value")
+                  ?.textContent?.trim())
+              || null,
           };
         });
     },

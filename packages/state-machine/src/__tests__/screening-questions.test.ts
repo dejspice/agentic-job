@@ -552,3 +552,145 @@ describe("pickBestOption — multi-option selection", () => {
     assert.equal(result, null);
   });
 });
+
+// ===========================================================================
+// LLM Fallback Integration tests
+// ===========================================================================
+
+describe("answerScreeningQuestionsState — LLM fallback for unknown freeform", () => {
+  it("uses LLM fallback when question is required and unmatched", async () => {
+    const commands: WorkerCommand[] = [];
+    let llmCalled = false;
+
+    const ctx: StateContext = {
+      runId: "test-run",
+      jobId: "test-job",
+      candidateId: "test-cand",
+      jobUrl: "https://example.com",
+      currentState: StateName.ANSWER_SCREENING_QUESTIONS,
+      stateHistory: [],
+      data: {
+        ...candidateData(),
+        answerGenerator: {
+          generate: async () => {
+            llmCalled = true;
+            return { answer: "I bring 8 years of relevant experience.", confidence: 0.8, source: "model" as const };
+          },
+        },
+      },
+      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
+        commands.push(cmd);
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true,
+            durationMs: 0,
+            data: {
+              fields: [
+                {
+                  selector: "#question_freeform",
+                  label: "Why do you want to join our company?",
+                  type: "textarea",
+                  value: null,
+                  required: true,
+                },
+              ],
+              count: 1,
+            },
+          };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    };
+
+    const result = await answerScreeningQuestionsState.execute(ctx);
+
+    assert.equal(result.outcome, "success");
+    assert.ok(llmCalled, "LLM fallback should have been called for unmatched freeform question");
+    const typeCmds = commands.filter((c) => c.type === "TYPE");
+    assert.ok(typeCmds.length >= 1, "Expected TYPE command with LLM-generated answer");
+  });
+
+  it("deterministic rule wins over LLM fallback when available", async () => {
+    let llmCalled = false;
+
+    const ctx: StateContext = {
+      runId: "test-run",
+      jobId: "test-job",
+      candidateId: "test-cand",
+      jobUrl: "https://example.com",
+      currentState: StateName.ANSWER_SCREENING_QUESTIONS,
+      stateHistory: [],
+      data: {
+        ...candidateData(),
+        answerGenerator: {
+          generate: async () => {
+            llmCalled = true;
+            return { answer: "LLM answer", confidence: 0.8, source: "model" as const };
+          },
+        },
+      },
+      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true,
+            durationMs: 0,
+            data: {
+              fields: [
+                {
+                  selector: "#question_salary",
+                  label: "What are your salary expectations?",
+                  type: "text",
+                  value: null,
+                  required: true,
+                },
+              ],
+              count: 1,
+            },
+          };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    };
+
+    await answerScreeningQuestionsState.execute(ctx);
+
+    assert.ok(!llmCalled, "LLM fallback should NOT be called when deterministic rule matches");
+  });
+
+  it("skips LLM when no answerGenerator is in data bag", async () => {
+    const ctx: StateContext = {
+      runId: "test-run",
+      jobId: "test-job",
+      candidateId: "test-cand",
+      jobUrl: "https://example.com",
+      currentState: StateName.ANSWER_SCREENING_QUESTIONS,
+      stateHistory: [],
+      data: candidateData(),
+      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true,
+            durationMs: 0,
+            data: {
+              fields: [
+                {
+                  selector: "#question_unknown",
+                  label: "Describe a recent product you shipped.",
+                  type: "textarea",
+                  value: null,
+                  required: true,
+                },
+              ],
+              count: 1,
+            },
+          };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    };
+
+    const result = await answerScreeningQuestionsState.execute(ctx);
+    const skipped = (result.data as Record<string, unknown>)?.screeningSkipped as string[];
+    assert.ok(skipped?.includes("Describe a recent product you shipped."), "Question should be skipped when no LLM is available");
+  });
+});

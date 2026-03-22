@@ -10,6 +10,7 @@
   "references": [
     { "path": "../core" },
     { "path": "../browser-worker" },
+    { "path": "../intelligence" },
     { "path": "../state-machine" }
   ]
 }

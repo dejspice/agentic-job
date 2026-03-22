@@ -76,6 +76,7 @@ import { resolve } from "node:path";
 import { BrowserBroker, RuntimeProvider } from "@dejsol/browser-broker";
 import type { SessionRequirements, AllocatedSession } from "@dejsol/browser-broker";
 import { LocalFileArtifactStore } from "@dejsol/browser-worker";
+import { createAnswerGenerator, createClaudeProvider } from "@dejsol/intelligence";
 import { executeGreenhouseHappyPath } from "../activities/greenhouse-browser-activity.js";
 
 // ---------------------------------------------------------------------------
@@ -258,10 +259,29 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
       if (v && !candidateBag[k]) candidateBag[k] = v;
     }
 
+    // Extract company name from URL for job context (e.g. "nmi" from
+    // "job-boards.greenhouse.io/nmi/jobs/123")
+    const urlCompany = targetUrl.match(/greenhouse\.io\/([^/]+)/)?.[1] ?? undefined;
+
+    // Create answer generator with Claude fallback if API key is present
+    const anthropicKey = process.env["ANTHROPIC_API_KEY"]?.trim();
+    const answerGenerator = anthropicKey
+      ? createAnswerGenerator(createClaudeProvider(anthropicKey))
+      : createAnswerGenerator(); // deterministic-only, no model
+
+    if (anthropicKey) {
+      console.log("[greenhouse-live] LLM fallback : enabled (Claude)");
+    } else {
+      console.log("[greenhouse-live] LLM fallback : disabled (no ANTHROPIC_API_KEY)");
+    }
+
     const data: Record<string, unknown> = {
       resumeFile: resumePath,
       candidate: candidateBag,
       preSubmitDwellMs,
+      answerGenerator,
+      company: urlCompany,
+      jobTitle: undefined,
     };
 
     console.log("[greenhouse-live] Starting state-machine execution…\n");

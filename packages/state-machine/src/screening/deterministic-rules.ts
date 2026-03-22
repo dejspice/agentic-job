@@ -153,6 +153,15 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     interaction: "react-select",
   },
 
+  // ── How did you hear about this role ─────────────────────────────────
+  {
+    name: "referral_source",
+    pattern: /how\s*did\s*you\s*hear|where\s*did\s*you\s*hear|how.*find.*role|how.*learn.*position|source.*application/i,
+    answer: { kind: "literal", value: "Other" },
+    interaction: "react-select",
+    searchSeed: "Other",
+  },
+
   // ── Willing to relocate ───────────────────────────────────────────────
   {
     name: "willing_to_relocate",
