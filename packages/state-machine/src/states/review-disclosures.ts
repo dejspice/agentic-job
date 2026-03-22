@@ -22,7 +22,7 @@ const GREENHOUSE_STANDARD_EEO: ReadonlyArray<{
     label: "Gender",
     dataKey: "candidate.gender",
     fallback: "Male",
-    searchSeed: "Male",
+    searchSeed: "Man",
   },
   {
     selector: "#hispanic_ethnicity",
@@ -59,12 +59,12 @@ const CUSTOM_EEO_PATTERNS: ReadonlyArray<{
   {
     pattern: /gender\s*identity|describe.*gender/i,
     dataKey: "candidate.gender",
-    fallback: "Male",
+    fallback: "Cisgender man",
   },
   {
     pattern: /race.*ethnicity|ethnicity.*race|racial.*background|describe.*racial/i,
     dataKey: "candidate.raceEthnicity",
-    fallback: "Asian",
+    fallback: "South Asian",
   },
   {
     pattern: /military\s*status|armed\s*forces/i,

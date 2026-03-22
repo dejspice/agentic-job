@@ -64,6 +64,29 @@ const ANSWER_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
                        "intermediate/proficient"]],
   ["beginner",        ["beginner / learning", "basic", "novice", "learning",
                        "beginner/learning"]],
+
+  // ── EEO gender — Greenhouse uses various phrasings ───────────────────
+  ["male",            ["man", "cisgender man", "cis man"]],
+  ["cisgender man",   ["male", "man", "cis man"]],
+  ["female",          ["woman", "cisgender woman", "cis woman"]],
+  ["cisgender woman", ["female", "woman", "cis woman"]],
+
+  // ── EEO race/ethnicity — Greenhouse custom boards ────────────────────
+  ["asian",           ["east asian", "south asian", "southeast asian"]],
+  ["south asian",     ["asian"]],
+  ["east asian",      ["asian"]],
+  ["southeast asian", ["asian"]],
+  ["middle eastern or north african", ["middle eastern", "north african", "mena"]],
+
+  // ── EEO veteran ──────────────────────────────────────────────────────
+  ["i am not a protected veteran",
+                      ["not a protected veteran", "i'm not a protected veteran",
+                       "no, i am not", "non-protected veteran"]],
+
+  // ── EEO disability ───────────────────────────────────────────────────
+  ["no, i do not have a disability and have not had one in the past",
+                      ["i do not have a disability", "no disability",
+                       "no, i don't have a disability"]],
 ]);
 
 // ---------------------------------------------------------------------------
