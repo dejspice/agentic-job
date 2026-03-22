@@ -123,29 +123,14 @@ async function fillEeoDropdown(
   // Click the visible .select__control box to open the dropdown menu.
   // The DOM structure is: label[for=id] ~ .select-shell ... .select__control
   // Never use TYPE sequential — that triggers scrollIntoView thrashing.
-  // Never click the raw combobox input — it's hidden behind
-  // .select__control and causes scrollIntoView thrashing.
-  // Try the control wrapper, then the dropdown toggle button.
-  const controlSelectors = [
-    `label[for="${questionId}"] ~ .select-shell .select__control`,
-    `#${questionId}-label ~ .select-shell .select__control`,
-    `label[for="${questionId}"] ~ .select-shell .select__indicators button`,
-  ];
-
-  let opened = false;
-  for (const clickTarget of controlSelectors) {
-    const exists = await context.execute({
-      type: "WAIT_FOR",
-      target: clickTarget,
-      timeoutMs: 300,
-    });
-    if (exists.success) {
-      await context.execute({ type: "CLICK", target: { kind: "css", value: clickTarget } });
-      opened = true;
-      break;
-    }
-  }
-  if (!opened) return false;
+  // Click the combobox input directly using page.click() which
+  // auto-scrolls and focuses.  This is the same mechanism that works
+  // for all screening question dropdowns.
+  const clickResult = await context.execute({
+    type: "CLICK",
+    target: { kind: "css", value: selector },
+  });
+  if (!clickResult.success) return false;
 
   // Wait for options to render
   const firstOptSelector = `#react-select-${questionId}-option-0`;
