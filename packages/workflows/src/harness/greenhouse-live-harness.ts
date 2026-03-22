@@ -301,8 +301,17 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
 
     // ── Print result ──────────────────────────────────────────────────────
 
+    const verificationRequired = Boolean(result.data?.verificationRequired);
+    const displayOutcome = verificationRequired
+      ? "VERIFICATION_REQUIRED"
+      : result.outcome.toUpperCase();
+
     console.log("\n[greenhouse-live] ─────────────────────────────────");
-    console.log(`[greenhouse-live] Outcome       : ${result.outcome.toUpperCase()}`);
+    console.log(`[greenhouse-live] Outcome       : ${displayOutcome}`);
+    if (verificationRequired) {
+      console.log("[greenhouse-live] ⚠️  Greenhouse sent a verification code to your email.");
+      console.log("[greenhouse-live]    The application is submitted — enter the code to finalize.");
+    }
     console.log(`[greenhouse-live] Final state   : ${result.finalState}`);
     console.log(`[greenhouse-live] States done   : ${result.statesCompleted.length} / 12`);
     console.log(`[greenhouse-live] Duration      : ${(durationMs / 1000).toFixed(1)}s`);
@@ -332,7 +341,8 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
 
     console.log("[greenhouse-live] ─────────────────────────────────\n");
 
-    return result.outcome === "success";
+    // VERIFICATION_REQUIRED is a success — the form was submitted.
+    return result.outcome === "success" || verificationRequired;
   } finally {
     if (session) {
       try {

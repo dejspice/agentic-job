@@ -154,9 +154,13 @@ export const answerScreeningQuestionsState: StateHandler = {
 
     const allFields = (extractResult.data as Record<string, unknown>).fields as ExtractedQuestion[];
 
-    // Step 2: Filter to screening question fields only (question_* IDs)
+    // Step 2: Filter to screening question fields.
+    // Greenhouse uses question_* IDs for custom questions, but some forms
+    // also use plain numeric IDs (e.g. #1255) for EEO/company-specific
+    // questions that appear in the screening section.  Include both patterns.
     const questions = allFields.filter(
-      (f) => f.selector.startsWith("#question_") && f.label,
+      (f) => f.selector.startsWith("#question_") && f.label
+        || (f.selector.match(/^#\d+$/) && f.label),
     );
 
     if (questions.length === 0) {

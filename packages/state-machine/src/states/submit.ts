@@ -23,6 +23,20 @@ const CONFIRMATION_WAIT_SELECTORS = [
   ".notice.success",
 ].join(", ");
 
+/**
+ * Selectors that indicate a verification-code challenge was presented.
+ * Greenhouse sends an 8-character or 6-digit code to the applicant's email
+ * when it detects potential bot behavior.  The form IS submitted — the
+ * candidate just needs to enter the code to finalize.
+ */
+const VERIFICATION_CHALLENGE_SELECTORS = [
+  'input[name="security_code"]',
+  'input[placeholder*="code"]',
+  'input[aria-label*="code"]',
+  ".security-code",
+  "#security_code",
+].join(", ");
+
 export const submitState: StateHandler = {
   name: StateName.SUBMIT,
 
@@ -67,6 +81,27 @@ export const submitState: StateHandler = {
     }
 
     if (!waitResult.success) {
+      // Check for verification-code challenge.  When Greenhouse suspects
+      // automation it sends a code to the applicant's email rather than
+      // immediately showing a confirmation page.  The application IS
+      // submitted — it is simply gated behind the code entry.
+      // We return success with verificationRequired=true so the harness
+      // can log this as VERIFICATION_REQUIRED rather than a hard failure.
+      const verificationCheck = await context.execute({
+        type: "WAIT_FOR",
+        target: VERIFICATION_CHALLENGE_SELECTORS,
+        timeoutMs: 3000,
+      });
+
+      if (verificationCheck.success) {
+        context.data.submitted = true;
+        context.data.verificationRequired = true;
+        return {
+          outcome: "success",
+          data: { verificationRequired: true },
+        };
+      }
+
       return {
         outcome: "failure",
         error: "Confirmation page did not appear after submit",
