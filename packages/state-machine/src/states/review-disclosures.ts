@@ -123,11 +123,13 @@ async function fillEeoDropdown(
   // Click the visible .select__control box to open the dropdown menu.
   // The DOM structure is: label[for=id] ~ .select-shell ... .select__control
   // Never use TYPE sequential — that triggers scrollIntoView thrashing.
+  // Never click the raw combobox input — it's hidden behind
+  // .select__control and causes scrollIntoView thrashing.
+  // Try the control wrapper, then the dropdown toggle button.
   const controlSelectors = [
     `label[for="${questionId}"] ~ .select-shell .select__control`,
     `#${questionId}-label ~ .select-shell .select__control`,
-    `[aria-labelledby="${questionId}-label"] .select__control`,
-    selector,
+    `label[for="${questionId}"] ~ .select-shell .select__indicators button`,
   ];
 
   let opened = false;
