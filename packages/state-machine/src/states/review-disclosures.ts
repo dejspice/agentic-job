@@ -1,17 +1,242 @@
 import { StateName } from "@dejsol/core";
 import type { StateHandler, StateContext, StateResult } from "../types.js";
+import { pickBestOption } from "../screening/option-matcher.js";
+
+// ---------------------------------------------------------------------------
+// EEO / voluntary self-identification field definitions
+// ---------------------------------------------------------------------------
+
+/**
+ * Standard Greenhouse EEO field IDs present on virtually every Greenhouse
+ * board.  These use stable selectors regardless of company.
+ */
+const GREENHOUSE_STANDARD_EEO: ReadonlyArray<{
+  selector: string;
+  label: string;
+  dataKey: string;
+  fallback: string;
+  searchSeed: string;
+}> = [
+  {
+    selector: "#gender",
+    label: "Gender",
+    dataKey: "candidate.gender",
+    fallback: "Male",
+    searchSeed: "Male",
+  },
+  {
+    selector: "#hispanic_ethnicity",
+    label: "Are you Hispanic/Latino?",
+    dataKey: "candidate.hispanicLatino",
+    fallback: "No",
+    searchSeed: "No",
+  },
+  {
+    selector: "#veteran_status",
+    label: "Veteran Status",
+    dataKey: "candidate.veteranStatus",
+    fallback: "I am not a protected veteran",
+    searchSeed: "not a protected",
+  },
+  {
+    selector: "#disability_status",
+    label: "Disability Status",
+    dataKey: "candidate.disabilityStatus",
+    fallback: "No, I do not have a disability and have not had one in the past",
+    searchSeed: "do not have",
+  },
+];
+
+/**
+ * Label patterns for Robinhood-style custom EEO dropdowns that use numeric
+ * IDs (#1255 etc.).  Matched against labels found by EXTRACT_FIELDS.
+ */
+const CUSTOM_EEO_PATTERNS: ReadonlyArray<{
+  pattern: RegExp;
+  dataKey: string;
+  fallback: string;
+  searchSeed: string;
+}> = [
+  {
+    pattern: /gender\s*identity|describe.*gender/i,
+    dataKey: "candidate.gender",
+    fallback: "I don't wish to answer",
+    searchSeed: "wish",
+  },
+  {
+    pattern: /race.*ethnicity|ethnicity.*race|racial.*background|describe.*racial/i,
+    dataKey: "candidate.raceEthnicity",
+    fallback: "I don't wish to answer",
+    searchSeed: "wish",
+  },
+  {
+    pattern: /military\s*status|armed\s*forces/i,
+    dataKey: "candidate.veteranStatus",
+    fallback: "I am not a protected veteran",
+    searchSeed: "not a protected",
+  },
+  {
+    pattern: /disability\s*status|substantially\s*limits/i,
+    dataKey: "candidate.disabilityStatus",
+    fallback: "No, I do not have a disability",
+    searchSeed: "do not have",
+  },
+  {
+    pattern: /lgbtq|sexual\s*orientation/i,
+    dataKey: "",
+    fallback: "I don't wish to answer",
+    searchSeed: "wish",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function resolveDataKey(data: Record<string, unknown>, dotPath: string): string | undefined {
+  if (!dotPath) return undefined;
+  const parts = dotPath.split(".");
+  let current: unknown = data;
+  for (const part of parts) {
+    if (current == null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return typeof current === "string" ? current : undefined;
+}
+
+/**
+ * Fill a React Select EEO dropdown.
+ * Opens the dropdown, reads all visible options, scores against the desired
+ * value, clicks the best match.  Falls back to first option if no match.
+ */
+async function fillEeoDropdown(
+  context: StateContext,
+  selector: string,
+  desiredValue: string,
+  searchSeed: string,
+): Promise<boolean> {
+  if (!context.execute) return false;
+
+  const questionId = selector.replace(/^#/, "");
+
+  // Click to focus + type seed to open dropdown
+  await context.execute({ type: "CLICK", target: { kind: "css", value: selector } });
+  await context.execute({ type: "TYPE", selector, value: searchSeed, sequential: true });
+
+  // Wait for options
+  const firstOptSelector = `#react-select-${questionId}-option-0`;
+  const optWait = await context.execute({
+    type: "WAIT_FOR",
+    target: firstOptSelector,
+    timeoutMs: 3000,
+  });
+  if (!optWait.success) return false;
+
+  // Extract all visible options
+  const extractResult = await context.execute({ type: "EXTRACT_OPTIONS" });
+  const optionLabels = extractResult.success
+    ? ((extractResult.data as Record<string, unknown>)?.options as string[] ?? [])
+    : [];
+
+  if (optionLabels.length > 0) {
+    const best = pickBestOption(desiredValue, optionLabels);
+    if (best) {
+      const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
+      await context.execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+      return true;
+    }
+  }
+
+  // Fallback: click first option
+  await context.execute({ type: "CLICK", target: { kind: "css", value: firstOptSelector } });
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// State handler
+// ---------------------------------------------------------------------------
 
 export const reviewDisclosuresState: StateHandler = {
   name: StateName.REVIEW_DISCLOSURES,
 
   entryCriteria:
-    "Screening questions answered (or skipped if none present). Disclosure checkboxes, EEO fields, or terms-of-service sections may be visible.",
+    "Screening questions answered. Disclosure checkboxes, EEO fields, or " +
+    "terms-of-service sections may be visible.",
 
   successCriteria:
-    "All required disclosure checkboxes are checked, voluntary self-identification fields are handled per candidate policy, and no blocking modals remain.",
+    "Standard Greenhouse EEO dropdowns and any custom voluntary " +
+    "self-identification fields have been answered. Required disclosure " +
+    "checkboxes are checked.",
 
-  async execute(_context: StateContext): Promise<StateResult> {
-    // TODO: detect disclosure/EEO/terms sections, apply candidate disclosure policies, check required boxes
-    return { outcome: "success" };
+  async execute(context: StateContext): Promise<StateResult> {
+    if (!context.execute) {
+      return { outcome: "success" };
+    }
+
+    const filled: string[] = [];
+    const skipped: string[] = [];
+
+    // ── 1. Standard Greenhouse EEO fields ─────────────────────────────────
+    for (const field of GREENHOUSE_STANDARD_EEO) {
+      const exists = await context.execute({
+        type: "WAIT_FOR",
+        target: field.selector,
+        timeoutMs: 500,
+      });
+      if (!exists.success) continue;
+
+      const desiredValue =
+        resolveDataKey(context.data, field.dataKey) ?? field.fallback;
+
+      const ok = await fillEeoDropdown(context, field.selector, desiredValue, field.searchSeed);
+      if (ok) filled.push(field.label);
+      else skipped.push(field.label);
+    }
+
+    // ── 2. Custom EEO fields by numeric ID (Robinhood, etc.) ──────────────
+    // Extract all fields and find any unmatched numeric-ID comboboxes that
+    // correspond to EEO patterns.
+    const extractResult = await context.execute({ type: "EXTRACT_FIELDS" });
+    if (extractResult.success && extractResult.data) {
+      const allFields = (extractResult.data as Record<string, unknown>).fields as Array<{
+        selector: string;
+        label: string | null;
+        role: string | null;
+        value: string | null;
+        required: boolean;
+      }>;
+
+      const customEeoFields = allFields.filter(
+        (f) =>
+          f.selector.match(/^#\d+$/) &&
+          f.label &&
+          f.role === "combobox" &&
+          !f.value,
+      );
+
+      for (const field of customEeoFields) {
+        const label = field.label!;
+        const match = CUSTOM_EEO_PATTERNS.find((p) => p.pattern.test(label));
+        if (!match) {
+          skipped.push(label);
+          continue;
+        }
+
+        const desiredValue =
+          resolveDataKey(context.data, match.dataKey) ?? match.fallback;
+
+        const ok = await fillEeoDropdown(context, field.selector, desiredValue, match.searchSeed);
+        if (ok) filled.push(label);
+        else skipped.push(label);
+      }
+    }
+
+    context.data.disclosuresFilled = filled;
+    context.data.disclosuresSkipped = skipped;
+
+    return {
+      outcome: "success",
+      data: { disclosuresFilled: filled, disclosuresSkipped: skipped },
+    };
   },
 };
