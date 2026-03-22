@@ -152,7 +152,7 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     pattern: /previously\s*employed|worked\s*.*before|former\s*employee|ever\s*worked\s*(for|at)\s*\w|ever\s*been\s*employed|employee.*intern.*contractor/i,
     answer: { kind: "dataKey", path: "candidate.workedHereBefore", fallback: "No" },
     interaction: "react-select",
-    searchSeed: "No",
+    searchSeed: "never",
   },
 
   // ── Open to in-person / office work ───────────────────────────────────
@@ -216,6 +216,76 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   {
     name: "open_to_travel",
     pattern: /open\s*to.*travel|occasional\s*travel|in-person\s*collaborat/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Work authorization (US) — explicit pattern for "legally authorized" ──
+  {
+    name: "work_authorized_us",
+    pattern: /legally\s*work\s*authorized|authorized\s*to\s*work\s*in\s*the\s*us|work\s*authorized.*us|legal.*work.*us/i,
+    answer: { kind: "dataKey", path: "candidate.authorizedToWork", fallback: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── EEO / voluntary self-identification ──────────────────────────────
+  {
+    name: "eeo_gender_identity",
+    pattern: /gender\s*identity|describe.*gender/i,
+    answer: { kind: "dataKey", path: "candidate.gender", fallback: "Male" },
+    interaction: "react-select",
+  },
+  {
+    name: "eeo_race_ethnicity",
+    pattern: /race.*ethnicity|ethnicity.*race|racial.*background|ethnic.*background|describe.*racial/i,
+    answer: { kind: "dataKey", path: "candidate.raceEthnicity", fallback: "Asian" },
+    interaction: "react-select",
+  },
+  {
+    name: "eeo_military_status",
+    pattern: /military\s*status|armed\s*forces|served.*military/i,
+    answer: { kind: "dataKey", path: "candidate.veteranStatus", fallback: "I am not a protected veteran" },
+    interaction: "react-select",
+  },
+  {
+    name: "eeo_disability_status",
+    pattern: /disability\s*status|do\s*you\s*have.*disability|substantially\s*limits/i,
+    answer: { kind: "dataKey", path: "candidate.disabilityStatus", fallback: "No, I do not have a disability and have not had one in the past" },
+    interaction: "react-select",
+  },
+  {
+    name: "eeo_lgbtq",
+    pattern: /lgbtq|identify\s*as\s*part\s*of\s*the\s*lgbtq/i,
+    answer: { kind: "literal", value: "I don't wish to answer" },
+    interaction: "react-select",
+  },
+  {
+    name: "eeo_hispanic_latino",
+    pattern: /hispanic.*latino|latino.*hispanic/i,
+    answer: { kind: "dataKey", path: "candidate.hispanicLatino", fallback: "No" },
+    interaction: "react-select",
+  },
+
+  // ── Government official / conflict of interest ────────────────────────
+  {
+    name: "government_official",
+    pattern: /government\s*official|bribery|corruption.*risk|public\s*function/i,
+    answer: { kind: "literal", value: "No" },
+    interaction: "react-select",
+  },
+
+  // ── Personal relationships / conflicts of interest ────────────────────
+  {
+    name: "personal_relationships_conflicts",
+    pattern: /personal.*familial\s*relationship|outside\s*business\s*activit|intellectual\s*property\s*ownership/i,
+    answer: { kind: "literal", value: "No" },
+    interaction: "react-select",
+  },
+
+  // ── Currently using product ───────────────────────────────────────────
+  {
+    name: "used_product",
+    pattern: /have\s*you\s*used\s+\w+\b(?!\s*robinhood.*employee|.*worked)/i,
     answer: { kind: "literal", value: "Yes" },
     interaction: "react-select",
   },

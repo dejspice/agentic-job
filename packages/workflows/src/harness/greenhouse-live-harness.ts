@@ -109,6 +109,11 @@ export interface HarnessConfig {
     salaryRange?: string;
     state?: string;
     industryExperience?: string;
+    gender?: string;
+    raceEthnicity?: string;
+    veteranStatus?: string;
+    disabilityStatus?: string;
+    hispanicLatino?: string;
   };
   /** Browser provider to use for session allocation. */
   provider: RuntimeProvider;
@@ -122,6 +127,8 @@ export interface HarnessConfig {
   slowMo: number;
   /** Milliseconds to pause before clicking the submit button. */
   preSubmitDwellMs: number;
+  /** Maximum run duration in ms before the harness aborts. Default 5 minutes. */
+  maxRunMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +209,11 @@ export function loadHarnessConfig(): HarnessConfig | null {
       salaryRange: "$120,000 - $140,000",
       state: process.env["GREENHOUSE_STATE"]?.trim() || "Texas",
       industryExperience: "Yes, 8 years in SaaS and fintech.",
+      gender: "Male",
+      raceEthnicity: "Asian",
+      veteranStatus: "I am not a protected veteran",
+      disabilityStatus: "No, I do not have a disability and have not had one in the past",
+      hispanicLatino: "No",
     },
     provider,
     headless: process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false",
@@ -211,6 +223,7 @@ export function loadHarnessConfig(): HarnessConfig | null {
     runId: process.env["GREENHOUSE_RUN_ID"]?.trim() || randomUUID(),
     slowMo: parseInt(process.env["BROWSER_SLOW_MO_MS"] ?? "100", 10),
     preSubmitDwellMs: parseInt(process.env["PRE_SUBMIT_DWELL_MS"] ?? "2000", 10),
+    maxRunMs: parseInt(process.env["MAX_RUN_MS"] ?? "300000", 10),
   };
 }
 
@@ -227,7 +240,7 @@ export function loadHarnessConfig(): HarnessConfig | null {
  * Returns true on success, false on failure.
  */
 export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
-  const { targetUrl, resumePath, candidate, provider, headless, artifactDir, runId, slowMo, preSubmitDwellMs } = config;
+  const { targetUrl, resumePath, candidate, provider, headless, artifactDir, runId, slowMo, preSubmitDwellMs, maxRunMs } = config;
 
   console.log("\n[greenhouse-live] ─────────────────────────────────");
   console.log(`[greenhouse-live] Run ID    : ${runId}`);
@@ -236,6 +249,7 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
   console.log(`[greenhouse-live] Headless  : ${headless}`);
   console.log(`[greenhouse-live] Slow-mo   : ${slowMo}ms`);
   console.log(`[greenhouse-live] Pre-submit: ${preSubmitDwellMs}ms`);
+  console.log(`[greenhouse-live] Max run   : ${(maxRunMs / 1000).toFixed(0)}s`);
   console.log(`[greenhouse-live] Artifact  : ${artifactDir}/${runId}/`);
   console.log("[greenhouse-live] ─────────────────────────────────\n");
 
@@ -287,7 +301,7 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
     console.log("[greenhouse-live] Starting state-machine execution…\n");
     const start = Date.now();
 
-    const result = await executeGreenhouseHappyPath({
+    const runPromise = executeGreenhouseHappyPath({
       page: session.page,
       store,
       runId,
@@ -296,6 +310,12 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
       jobUrl: targetUrl,
       data,
     });
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Run exceeded ${(maxRunMs / 1000).toFixed(0)}s timeout`)), maxRunMs),
+    );
+
+    const result = await Promise.race([runPromise, timeoutPromise]);
 
     const durationMs = Date.now() - start;
 

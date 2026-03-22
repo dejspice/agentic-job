@@ -47,15 +47,26 @@ export function createClaudeProvider(apiKey: string): ModelProvider {
         messages,
       };
 
-      const response = await fetch(ANTHROPIC_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": ANTHROPIC_VERSION,
-        },
-        body: JSON.stringify(body),
-      });
+      // Abort the request if it takes longer than 20 seconds.
+      // This prevents individual LLM calls from hanging a full run.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20_000);
+
+      let response: Response;
+      try {
+        response = await fetch(ANTHROPIC_API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": ANTHROPIC_VERSION,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         const errText = await response.text().catch(() => "unknown error");
