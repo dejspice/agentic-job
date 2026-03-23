@@ -190,6 +190,14 @@ export interface VerificationQueueItem {
 
 export type VerificationQueueResponse = ApiResponse<VerificationQueueItem[]>;
 
+/**
+ * Request body for POST /api/runs/:id/verification-code.
+ * Operator supplies the security code that Greenhouse emailed to the candidate.
+ */
+export interface VerificationCodeBody {
+  code: string;
+}
+
 // --- Review ---
 
 export interface ReviewQueueQuery {

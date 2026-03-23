@@ -77,7 +77,10 @@ import { BrowserBroker, RuntimeProvider } from "@dejsol/browser-broker";
 import type { SessionRequirements, AllocatedSession } from "@dejsol/browser-broker";
 import { LocalFileArtifactStore } from "@dejsol/browser-worker";
 import { createAnswerGenerator, createClaudeProvider } from "@dejsol/intelligence";
-import { executeGreenhouseHappyPath } from "../activities/greenhouse-browser-activity.js";
+import {
+  executeGreenhouseHappyPath,
+  enterVerificationCode,
+} from "../activities/greenhouse-browser-activity.js";
 
 // ---------------------------------------------------------------------------
 // Configuration types
@@ -361,6 +364,31 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
 
     console.log("[greenhouse-live] ─────────────────────────────────\n");
 
+    // ── Verification code entry (live session is still open) ──────────────
+    // The browser session is still active here.  If Greenhouse showed the
+    // verification challenge, prompt the operator for the code NOW — before
+    // the session is released — so we can enter it in the same page context.
+    if (verificationRequired && session?.page) {
+      console.log("[greenhouse-live] 🔑 Verification code required.");
+      console.log("[greenhouse-live]    Check your email inbox for the code.");
+      const code = await promptForVerificationCode();
+      if (code) {
+        console.log("[greenhouse-live] Entering verification code…");
+        const verifyResult = await enterVerificationCode(session.page, code);
+        if (verifyResult.success) {
+          console.log("[greenhouse-live] ✓ Code accepted — application submitted!");
+        } else {
+          console.log(
+            `[greenhouse-live] ✗ Code entry: ${verifyResult.outcome}` +
+            (verifyResult.error ? ` (${verifyResult.error})` : ""),
+          );
+          console.log("[greenhouse-live]   Complete entry manually via the job URL.");
+        }
+      } else {
+        console.log("[greenhouse-live] No code entered — complete manually via the job URL.");
+      }
+    }
+
     // VERIFICATION_REQUIRED is a success — the form was submitted.
     return result.outcome === "success" || verificationRequired;
   } finally {
@@ -373,6 +401,37 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Stdin prompt for verification code
+// ---------------------------------------------------------------------------
+
+/**
+ * Prompt the operator for the Greenhouse security code via stdin.
+ * Returns the trimmed code, or null if the operator skips or times out (5 min).
+ */
+async function promptForVerificationCode(): Promise<string | null> {
+  const { createInterface } = await import("node:readline");
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+    const timeout = setTimeout(() => {
+      rl.close();
+      console.log("\n[greenhouse-live] Code entry timed out (5 minutes).");
+      resolve(null);
+    }, 300_000);
+
+    rl.question(
+      "[greenhouse-live] Enter verification code (or press Enter to skip): ",
+      (input) => {
+        clearTimeout(timeout);
+        rl.close();
+        const trimmed = input.trim().replace(/\s/g, "");
+        resolve(trimmed.length > 0 ? trimmed : null);
+      },
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------

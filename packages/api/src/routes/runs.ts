@@ -8,6 +8,7 @@ import type {
   RunListResponse,
   RunStatusResponse,
   VerificationQueueResponse,
+  VerificationCodeBody,
 } from "../types.js";
 import type { ApplyRun } from "@dejsol/core";
 import type { TemporalClientWrapper } from "../temporal-client.js";
@@ -294,6 +295,54 @@ runsRouter.get("/:id/status", async (req, res, next) => {
     const response: ApiResponse<RunStatusResponse> = {
       success: true,
       data: stub,
+    };
+    res.json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/runs/:id/verification-code — Submit the Greenhouse security code.
+ *
+ * Accepts the 8-character verification code that Greenhouse emailed to the
+ * candidate.  When a Temporal client is wired, sends verificationCodeSignal
+ * to the workflow, which then enters "awaiting_verification" phase and calls
+ * enterVerificationCodeActivity to complete the submission.
+ *
+ * Without Temporal (dev / standalone), acknowledges receipt so the operator
+ * can use the code manually via the job application URL.
+ */
+runsRouter.post("/:id/verification-code", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const body = req.body as Partial<VerificationCodeBody>;
+
+    const rawCode = (body.code ?? "").toString().trim().replace(/\s/g, "");
+    if (!rawCode || rawCode.length < 4) {
+      throw ApiError.badRequest(
+        "code is required and must be at least 4 alphanumeric characters",
+      );
+    }
+    const code = rawCode.slice(0, 10); // truncate to max 10 chars for safety
+
+    const temporalClient = req.app.locals.temporalClient as TemporalClientWrapper | undefined;
+
+    if (temporalClient) {
+      await temporalClient.signalVerificationCode(id, code);
+      const response: ApiResponse<{ runId: string; signalSent: boolean }> = {
+        success: true,
+        data: { runId: id, signalSent: true },
+        message: "Verification code sent to workflow — submission in progress.",
+      };
+      return res.json(response);
+    }
+
+    // No Temporal client — acknowledge receipt, operator completes manually.
+    const response: ApiResponse<{ runId: string; signalSent: boolean }> = {
+      success: true,
+      data: { runId: id, signalSent: false },
+      message: "Code received. Open the job application URL and enter it manually.",
     };
     res.json(response);
   } catch (err) {

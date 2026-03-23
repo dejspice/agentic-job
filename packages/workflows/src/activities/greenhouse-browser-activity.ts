@@ -329,3 +329,142 @@ export async function runGreenhouseHappyPathActivity(
     await browser.close();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Verification code entry
+// ---------------------------------------------------------------------------
+
+/** Selectors that indicate the verification code form is present. */
+const VERIFICATION_FORM_SELECTORS = [
+  "text=Security code",
+  "text=verification code was sent",
+  "text=confirm you're a human",
+];
+
+/** Post-code-entry confirmation selectors. */
+const CODE_CONFIRMATION_SELECTORS = [
+  ".application-confirmation",
+  "#application_confirmation",
+  "text=Thank you for your interest",
+  "text=View more jobs",
+];
+
+export interface VerificationEntryResult {
+  success: boolean;
+  /** "submitted" = confirmed, "not_found" = form not visible, "failed" = entered but not confirmed */
+  outcome: "submitted" | "not_found" | "failed";
+  error?: string;
+}
+
+/**
+ * Enter the operator-supplied verification code into the Greenhouse
+ * security-code challenge form.
+ *
+ * Designed to be called with the SAME Playwright Page that showed the
+ * verification form (live-harness path), or with a fresh page navigated
+ * to the job URL (Temporal activity path — best-effort, session-dependent).
+ *
+ * Handles two layouts:
+ *   1. Single input  (input[name="security_code"] or similar)
+ *   2. OTP-style 8 individual single-character boxes (Robinhood)
+ */
+export async function enterVerificationCode(
+  page: Page,
+  code: string,
+): Promise<VerificationEntryResult> {
+  // 1. Confirm the verification form is present.
+  let formVisible = false;
+  for (const sel of VERIFICATION_FORM_SELECTORS) {
+    const found = await page.waitForSelector(sel, { timeout: 4000 }).catch(() => null);
+    if (found) {
+      formVisible = true;
+      break;
+    }
+  }
+
+  if (!formVisible) {
+    return {
+      success: false,
+      outcome: "not_found",
+      error: "Verification code form not visible — session may have expired",
+    };
+  }
+
+  // 2. Enter the code.
+  // Strategy A: single named input.
+  const singleInput = await page.$(
+    'input[name="security_code"], #security_code, input[placeholder*="code" i]',
+  );
+
+  if (singleInput) {
+    await singleInput.fill(code);
+  } else {
+    // Strategy B: OTP-style individual single-character inputs.
+    const charInputs = await page.$$('input[maxlength="1"]');
+    if (charInputs.length >= code.length) {
+      for (let i = 0; i < Math.min(code.length, charInputs.length); i++) {
+        await charInputs[i]!.click();
+        await charInputs[i]!.type(code[i]!, { delay: 80 });
+      }
+    } else {
+      // Strategy C: find any code-region input and type there.
+      const fallbackInput = await page.$(
+        '[aria-label*="code" i] input, [class*="code" i] input, input[type="text"]',
+      );
+      if (!fallbackInput) {
+        return { success: false, outcome: "failed", error: "Could not locate a code input field" };
+      }
+      await fallbackInput.click();
+      await page.keyboard.type(code, { delay: 80 });
+    }
+  }
+
+  // 3. Submit.
+  await page
+    .click('button[type="submit"], input[type="submit"]', { force: true })
+    .catch(() => {});
+
+  // 4. Wait for confirmation.
+  for (const sel of CODE_CONFIRMATION_SELECTORS) {
+    const found = await page.waitForSelector(sel, { timeout: 8000 }).catch(() => null);
+    if (found) return { success: true, outcome: "submitted" };
+  }
+
+  return {
+    success: false,
+    outcome: "failed",
+    error: "Confirmation page not detected after code entry",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Temporal activity wrapper for code entry
+// ---------------------------------------------------------------------------
+
+export interface EnterVerificationCodeInput {
+  runId: string;
+  jobUrl: string;
+  code: string;
+}
+
+/**
+ * Temporal activity: allocate a fresh Chromium session, navigate to the
+ * job URL, and enter the verification code.
+ *
+ * NOTE: This is best-effort.  Greenhouse verification state is session-bound;
+ * if the challenge was tied to the original browser session, this activity
+ * will return outcome="not_found".  In that case the run stays
+ * VERIFICATION_REQUIRED and the operator completes entry manually.
+ */
+export async function enterVerificationCodeActivity(
+  input: EnterVerificationCodeInput,
+): Promise<VerificationEntryResult> {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.goto(input.jobUrl, { waitUntil: "domcontentloaded" });
+    return await enterVerificationCode(page, input.code);
+  } finally {
+    await browser.close();
+  }
+}

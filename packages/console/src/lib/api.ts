@@ -258,6 +258,24 @@ export async function approveRun(
 }
 
 /**
+ * Submit a Greenhouse security code for a VERIFICATION_REQUIRED run.
+ * POST /api/runs/:runId/verification-code
+ */
+export async function submitVerificationCode(
+  runId: string,
+  code: string,
+): Promise<{ signalSent: boolean }> {
+  const result = await apiFetch<{ runId: string; signalSent: boolean }>(
+    `/runs/${runId}/verification-code`,
+    {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    },
+  );
+  return result;
+}
+
+/**
  * Reject a run at the review gate.
  * POST /api/review/:runId/reject
  * reviewerNote is required by the API endpoint.
