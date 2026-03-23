@@ -23,8 +23,8 @@
  */
 
 import type { PrismaClient, RunOutcome as PrismaRunOutcome } from "@prisma/client";
-import type { ArtifactUrls, RunOutcome } from "@dejsol/core";
-import type { VerificationQueueItem } from "./types.js";
+import type { ArtifactUrls, RunOutcome, RunCost } from "@dejsol/core";
+import type { VerificationQueueItem, KpiPeriod, KpiSnapshot, KpiValue } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -187,7 +187,6 @@ export async function queryVerificationRuns(
   });
 
   return runs.map((run) => {
-    // artifactUrlsJson is Prisma.JsonValue; cast to the known ArtifactUrls shape.
     const artifacts = (run.artifactUrlsJson ?? {}) as ArtifactUrls;
     const screenshotMap = artifacts.screenshots ?? {};
 
@@ -209,4 +208,169 @@ export async function queryVerificationRuns(
       ...(postSubmitEntry ? { postSubmitScreenshotUrl: postSubmitEntry[1] } : {}),
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// KPI aggregation
+// ---------------------------------------------------------------------------
+
+/** Period lengths in milliseconds. */
+const PERIOD_MS: Record<KpiPeriod, number> = {
+  "24h": 86_400_000,
+  "7d":  604_800_000,
+  "30d": 2_592_000_000,
+};
+
+/**
+ * Shape of a run row fetched for KPI aggregation.
+ * Uses a minimal select to avoid pulling large JSON columns.
+ */
+export interface KpiRunRow {
+  outcome: string | null;
+  humanInterventions: number;
+  startedAt: Date;
+  completedAt: Date | null;
+  costJson: unknown;
+}
+
+/**
+ * Pure aggregation function — computes a KpiSnapshot from two pre-fetched
+ * arrays of run rows (current period and previous period) and a review count.
+ *
+ * Keeping this separate from the Prisma query makes it trivially unit-testable.
+ */
+export function buildKpiSnapshot(
+  period: KpiPeriod,
+  current: KpiRunRow[],
+  previous: KpiRunRow[],
+  reviewPendingCount: number,
+): KpiSnapshot {
+  function aggregate(runs: KpiRunRow[]) {
+    const total = runs.length;
+    const submitted = runs.filter((r) => r.outcome === "SUBMITTED").length;
+    const failed = runs.filter((r) => r.outcome === "FAILED").length;
+    const verificationRequired = runs.filter(
+      (r) => r.outcome === "VERIFICATION_REQUIRED",
+    ).length;
+    const hitl = runs.filter((r) => (r.humanInterventions ?? 0) > 0).length;
+
+    const completedRuns = runs.filter((r) => r.completedAt !== null);
+    const avgDurationSec =
+      completedRuns.length > 0
+        ? completedRuns.reduce(
+            (sum, r) =>
+              sum + (r.completedAt!.getTime() - r.startedAt.getTime()) / 1000,
+            0,
+          ) / completedRuns.length
+        : 0;
+
+    const llmCost = runs.reduce((sum, r) => {
+      const cost = (r.costJson ?? {}) as RunCost;
+      return sum + (cost.estimatedCostUsd ?? 0);
+    }, 0);
+
+    // deterministicRate: runs with no LLM calls / total.
+    // Approximation until per-field answer-bank tracking is wired.
+    const deterministicRuns = runs.filter((r) => {
+      const cost = (r.costJson ?? {}) as RunCost;
+      return !cost.llmCalls || cost.llmCalls === 0;
+    }).length;
+
+    const successRate =
+      total > 0 ? ((submitted + verificationRequired) / total) * 100 : 0;
+    const hitlRate = total > 0 ? (hitl / total) * 100 : 0;
+    const deterministicRate =
+      total > 0 ? (deterministicRuns / total) * 100 : 0;
+
+    return {
+      total,
+      submitted,
+      failed,
+      verificationRequired,
+      hitlRate,
+      avgDurationSec,
+      llmCost,
+      successRate,
+      deterministicRate,
+    };
+  }
+
+  const c = aggregate(current);
+  const p = aggregate(previous);
+
+  function kv(
+    currentVal: number,
+    prevVal: number,
+    format: (n: number) => string,
+  ): KpiValue {
+    const delta =
+      prevVal === 0
+        ? undefined
+        : Math.round(((currentVal - prevVal) / prevVal) * 1000) / 10;
+    return { current: currentVal, previous: prevVal, delta, formatted: format(currentVal) };
+  }
+
+  const pct = (n: number) => `${n.toFixed(1)}%`;
+  const usd = (n: number) => `$${n.toFixed(2)}`;
+  const dur = (n: number) =>
+    n < 60 ? `${Math.round(n)}s` : `${(n / 60).toFixed(1)} min`;
+  const int = (n: number) => `${Math.round(n)}`;
+
+  return {
+    period,
+    generatedAt: new Date().toISOString(),
+    successRate:              kv(c.successRate,         p.successRate,         pct),
+    hitlRate:                 kv(c.hitlRate,             p.hitlRate,            pct),
+    llmCostUsd:               kv(c.llmCost,             p.llmCost,             usd),
+    deterministicRate:        kv(c.deterministicRate,   p.deterministicRate,   pct),
+    totalRuns:                kv(c.total,               p.total,               int),
+    submittedRuns:            kv(c.submitted,           p.submitted,           int),
+    failedRuns:               kv(c.failed,              p.failed,              int),
+    verificationRequiredRuns: kv(c.verificationRequired, p.verificationRequired, int),
+    avgRunDurationSec:        kv(c.avgDurationSec,      p.avgDurationSec,      dur),
+    reviewPendingCount,
+  };
+}
+
+/**
+ * Compute a KPI snapshot for the given period by querying apply_runs.
+ *
+ * Fetches current and previous period rows in parallel using a minimal
+ * column selection, then delegates all aggregation to buildKpiSnapshot.
+ *
+ * @param prisma   Active PrismaClient instance.
+ * @param period   Observation window: "24h" | "7d" | "30d".
+ */
+export async function computeKpiSnapshot(
+  prisma: PrismaClient,
+  period: KpiPeriod,
+): Promise<KpiSnapshot> {
+  const now = Date.now();
+  const periodMs = PERIOD_MS[period];
+  const currentStart  = new Date(now - periodMs);
+  const previousStart = new Date(now - 2 * periodMs);
+
+  const rowSelect = {
+    outcome:            true,
+    humanInterventions: true,
+    startedAt:          true,
+    completedAt:        true,
+    costJson:           true,
+  } as const;
+
+  const [currentRuns, previousRuns, reviewPendingCount] = await Promise.all([
+    prisma.applyRun.findMany({
+      where: { startedAt: { gte: currentStart } },
+      select: rowSelect,
+    }),
+    prisma.applyRun.findMany({
+      where: { startedAt: { gte: previousStart, lt: currentStart } },
+      select: rowSelect,
+    }),
+    prisma.applyRun.count({
+      where: { outcome: null, mode: "REVIEW_BEFORE_SUBMIT" },
+    }),
+  ]);
+
+  return buildKpiSnapshot(period, currentRuns, previousRuns, reviewPendingCount);
 }

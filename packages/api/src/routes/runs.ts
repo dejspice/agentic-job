@@ -12,7 +12,8 @@ import type {
 import type { ApplyRun } from "@dejsol/core";
 import type { TemporalClientWrapper } from "../temporal-client.js";
 import type { PrismaClient } from "@prisma/client";
-import { queryVerificationRuns } from "../persistence.js";
+import { queryVerificationRuns, computeKpiSnapshot } from "../persistence.js";
+import type { KpiResponse } from "../types.js";
 
 export const runsRouter = Router();
 
@@ -103,6 +104,56 @@ runsRouter.post("/", async (req, res, next) => {
         : "Run started successfully",
     };
     res.status(201).json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/runs/kpi?period=24h|7d|30d — Compute dashboard KPI snapshot.
+ *
+ * IMPORTANT: registered before /:id so the static path segment takes priority.
+ *
+ * Aggregates apply_runs for the requested period plus the prior period
+ * (for delta computation), returning a KpiSnapshot ready for the dashboard.
+ * Falls back to an empty zero-value snapshot when the DB client is not wired.
+ */
+runsRouter.get("/kpi", async (req, res, next) => {
+  try {
+    const rawPeriod = (req.query["period"] as string | undefined) ?? "7d";
+    if (rawPeriod !== "24h" && rawPeriod !== "7d" && rawPeriod !== "30d") {
+      throw ApiError.badRequest(
+        `Invalid period "${rawPeriod}". Must be one of: 24h, 7d, 30d.`,
+      );
+    }
+    const period = rawPeriod;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    if (prismaClient) {
+      const snapshot = await computeKpiSnapshot(prismaClient, period);
+      const response: KpiResponse = { success: true, data: snapshot };
+      return res.json(response);
+    }
+
+    // No DB client — return a zero-value snapshot so the dashboard degrades
+    // gracefully without crashing (matches the mock shape exactly).
+    const zero = { current: 0, previous: 0, formatted: "0" };
+    const emptySnapshot: import("../types.js").KpiSnapshot = {
+      period: period as import("../types.js").KpiPeriod,
+      generatedAt: new Date().toISOString(),
+      successRate: { ...zero, formatted: "0.0%" },
+      hitlRate: { ...zero, formatted: "0.0%" },
+      llmCostUsd: { ...zero, formatted: "$0.00" },
+      deterministicRate: { ...zero, formatted: "0.0%" },
+      totalRuns: zero,
+      submittedRuns: zero,
+      failedRuns: zero,
+      verificationRequiredRuns: zero,
+      avgRunDurationSec: { ...zero, formatted: "0s" },
+      reviewPendingCount: 0,
+    };
+    const response: KpiResponse = { success: true, data: emptySnapshot };
+    res.json(response);
   } catch (err) {
     next(err);
   }

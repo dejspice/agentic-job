@@ -141,18 +141,24 @@ function toRunDetail(r: ApiApplyRun, status?: ApiRunStatus): RunDetailView {
 }
 
 // ---------------------------------------------------------------------------
-// KPI — mock fallback (GET /api/runs/kpi not yet implemented server-side)
+// KPI — real endpoint with mock fallback on error
 // ---------------------------------------------------------------------------
 
 /**
  * Fetch the KPI snapshot for a given observation period.
  *
- * The /api/runs/kpi aggregation endpoint does not yet exist.
- * Returns mock data until the server-side endpoint is wired.
+ * GET /api/runs/kpi?period=<period>
+ *
+ * Falls back to local mock data only when the API is unavailable (e.g. dev
+ * with no running server), so the dashboard always renders something useful.
  */
 export async function getKpiSnapshot(period: KpiPeriod): Promise<KpiSnapshot> {
-  // TODO: replace with real fetch once GET /api/runs/kpi?period=${period} lands
-  return Promise.resolve(MOCK_KPI_SNAPSHOTS[period]);
+  try {
+    const snapshot = await apiFetch<KpiSnapshot>(`/runs/kpi?period=${period}`);
+    return snapshot;
+  } catch {
+    return MOCK_KPI_SNAPSHOTS[period];
+  }
 }
 
 // ---------------------------------------------------------------------------
