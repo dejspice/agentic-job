@@ -202,6 +202,14 @@ export async function applyWorkflow(
       return buildResult(RunOutcome.FAILED, ghResult.finalState, statesCompleted, errors, bundle);
     }
 
+    // Greenhouse verification challenge: the form was submitted but Greenhouse
+    // gated the completion behind an email code.  The application IS in flight —
+    // classify as VERIFICATION_REQUIRED so it is not falsely recorded as SUBMITTED.
+    if (ghResult.data.verificationRequired === true) {
+      phase = "completed";
+      return buildResult(RunOutcome.VERIFICATION_REQUIRED, ghResult.finalState, statesCompleted, errors, bundle);
+    }
+
     phase = "completed";
     return buildResult(
       RunOutcome.SUBMITTED,

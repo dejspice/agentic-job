@@ -35,6 +35,9 @@ const CONFIRMATION_TEXT_SELECTORS = [
  * Greenhouse sends an 8-character or 6-digit code to the applicant's email
  * when it detects potential bot behavior.  The form IS submitted — the
  * candidate just needs to enter the code to finalize.
+ *
+ * Robinhood and other boards render 8 separate single-character inputs with
+ * no shared name/class — matched via page text instead.
  */
 const VERIFICATION_CHALLENGE_SELECTORS = [
   'input[name="security_code"]',
@@ -43,6 +46,14 @@ const VERIFICATION_CHALLENGE_SELECTORS = [
   ".security-code",
   "#security_code",
 ].join(", ");
+
+const VERIFICATION_CHALLENGE_TEXT_SELECTORS = [
+  "text=verification code was sent",
+  "text=confirm you're a human",
+  "text=Security code",
+  "text=enter the 8-character code",
+  "text=enter the 6-digit code",
+];
 
 export const submitState: StateHandler = {
   name: StateName.SUBMIT,
@@ -112,11 +123,25 @@ export const submitState: StateHandler = {
       // submitted — it is simply gated behind the code entry.
       // We return success with verificationRequired=true so the harness
       // can log this as VERIFICATION_REQUIRED rather than a hard failure.
-      const verificationCheck = await context.execute({
+      let verificationCheck = await context.execute({
         type: "WAIT_FOR",
         target: VERIFICATION_CHALLENGE_SELECTORS,
-        timeoutMs: 3000,
+        timeoutMs: 2000,
       });
+
+      if (!verificationCheck.success) {
+        for (const textSel of VERIFICATION_CHALLENGE_TEXT_SELECTORS) {
+          const textWait = await context.execute({
+            type: "WAIT_FOR",
+            target: textSel,
+            timeoutMs: 1500,
+          });
+          if (textWait.success) {
+            verificationCheck = textWait;
+            break;
+          }
+        }
+      }
 
       if (verificationCheck.success) {
         context.data.submitted = true;
