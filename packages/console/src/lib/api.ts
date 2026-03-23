@@ -225,10 +225,10 @@ export async function getReviewQueueStats(): Promise<ReviewQueueStats> {
 export async function getVerificationQueue(): Promise<VerificationQueueItem[]> {
   try {
     const items = await apiFetch<VerificationQueueItem[]>(`/runs/verification-required`);
-    // Server stub returns [] — fall back to mock so the UI is populated
-    if (Array.isArray(items) && items.length > 0) return items;
-    return MOCK_VERIFICATION_QUEUE;
+    return Array.isArray(items) ? items : [];
   } catch {
+    // API unavailable — degrade gracefully with mock data so the UI
+    // remains functional during development / offline use.
     return MOCK_VERIFICATION_QUEUE;
   }
 }

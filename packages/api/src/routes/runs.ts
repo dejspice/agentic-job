@@ -11,6 +11,8 @@ import type {
 } from "../types.js";
 import type { ApplyRun } from "@dejsol/core";
 import type { TemporalClientWrapper } from "../temporal-client.js";
+import type { PrismaClient } from "@prisma/client";
+import { queryVerificationRuns } from "../persistence.js";
 
 export const runsRouter = Router();
 
@@ -101,6 +103,42 @@ runsRouter.post("/", async (req, res, next) => {
         : "Run started successfully",
     };
     res.status(201).json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/runs/verification-required — List runs awaiting email verification.
+ *
+ * IMPORTANT: This route must be registered before GET /api/runs/:id so Express
+ * matches the static path segment first and does not interpret
+ * "verification-required" as a run ID.
+ *
+ * Returns apply_runs with outcome = VERIFICATION_REQUIRED joined with their
+ * job_opportunities record, newest-first.  Falls back to an empty list when
+ * the PrismaClient is not injected (e.g. test environments without a DB).
+ */
+runsRouter.get("/verification-required", async (req, res, next) => {
+  try {
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    if (prismaClient) {
+      const items = await queryVerificationRuns(prismaClient);
+      const response: VerificationQueueResponse = {
+        success: true,
+        data: items,
+      };
+      return res.json(response);
+    }
+
+    // No DB client — return empty list (test / cold-start path)
+    const response: VerificationQueueResponse = {
+      success: true,
+      data: [],
+      message: "DB not connected — no verification-required runs available.",
+    };
+    res.json(response);
   } catch (err) {
     next(err);
   }
@@ -212,25 +250,3 @@ runsRouter.get("/:id/status", async (req, res, next) => {
   }
 });
 
-/**
- * GET /api/runs/verification-required — List runs awaiting email verification.
- *
- * Returns completed runs with outcome = VERIFICATION_REQUIRED so the console
- * can surface them as an operator handoff queue.
- *
- * Production path: query apply_runs WHERE outcome = 'VERIFICATION_REQUIRED'
- * joined with job_opportunities for company/jobTitle/jobUrl context.
- * Stub returns an empty list until the DB layer is wired.
- */
-runsRouter.get("/verification-required", (_req, res, next) => {
-  try {
-    const response: VerificationQueueResponse = {
-      success: true,
-      data: [],
-      message: `Runs awaiting email verification (${RunOutcome.VERIFICATION_REQUIRED}).`,
-    };
-    res.json(response);
-  } catch (err) {
-    next(err);
-  }
-});

@@ -24,6 +24,7 @@
 
 import type { PrismaClient, RunOutcome as PrismaRunOutcome } from "@prisma/client";
 import type { ArtifactUrls, RunOutcome } from "@dejsol/core";
+import type { VerificationQueueItem } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -155,5 +156,57 @@ export async function persistRunResult(
       confirmationId: confirmationId ?? null,
       completedAt: new Date(),
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Verification queue query
+// ---------------------------------------------------------------------------
+
+/**
+ * Query apply_runs for all runs with outcome = VERIFICATION_REQUIRED.
+ *
+ * Joins job_opportunities so the result carries the company, jobTitle, and
+ * jobUrl needed to surface the operator handoff queue in the console.
+ *
+ * The post-submit screenshot URL is extracted from artifactUrlsJson on a
+ * best-effort basis — keys containing "post-submit" are checked first.
+ *
+ * @param prisma  Active PrismaClient instance.
+ * @param limit   Maximum rows to return (default 50, newest-first).
+ */
+export async function queryVerificationRuns(
+  prisma: PrismaClient,
+  limit = 50,
+): Promise<VerificationQueueItem[]> {
+  const runs = await prisma.applyRun.findMany({
+    where: { outcome: "VERIFICATION_REQUIRED" as PrismaRunOutcome },
+    include: { job: true },
+    orderBy: { completedAt: "desc" },
+    take: limit,
+  });
+
+  return runs.map((run) => {
+    // artifactUrlsJson is Prisma.JsonValue; cast to the known ArtifactUrls shape.
+    const artifacts = (run.artifactUrlsJson ?? {}) as ArtifactUrls;
+    const screenshotMap = artifacts.screenshots ?? {};
+
+    // Find the post-submit screenshot — harness stores it under a key that
+    // contains "post-submit".
+    const postSubmitEntry = Object.entries(screenshotMap).find(([key]) =>
+      key.toLowerCase().includes("post-submit"),
+    );
+
+    return {
+      runId: run.id,
+      jobId: run.jobId,
+      candidateId: run.candidateId,
+      company: run.job.company,
+      jobTitle: run.job.jobTitle,
+      jobUrl: run.job.jobUrl,
+      completedAt:
+        run.completedAt?.toISOString() ?? run.startedAt.toISOString(),
+      ...(postSubmitEntry ? { postSubmitScreenshotUrl: postSubmitEntry[1] } : {}),
+    };
   });
 }

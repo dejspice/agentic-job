@@ -31,8 +31,8 @@ export {
   extractWorkflowErrors,
 } from "./mappers.js";
 
-// Workflow result persistence
-export { persistRunResult } from "./persistence.js";
+// Workflow result persistence + DB queries
+export { persistRunResult, queryVerificationRuns } from "./persistence.js";
 export type { RunResultPayload } from "./persistence.js";
 
 // API types
@@ -60,4 +60,6 @@ export type {
   ReviewQueueResponse,
   ReviewDecisionBody,
   ReviewDetailResponse,
+  VerificationQueueItem,
+  VerificationQueueResponse,
 } from "./types.js";
