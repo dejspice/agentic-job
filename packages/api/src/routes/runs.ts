@@ -7,6 +7,7 @@ import type {
   ApiResponse,
   RunListResponse,
   RunStatusResponse,
+  VerificationQueueResponse,
 } from "../types.js";
 import type { ApplyRun } from "@dejsol/core";
 import type { TemporalClientWrapper } from "../temporal-client.js";
@@ -204,6 +205,29 @@ runsRouter.get("/:id/status", async (req, res, next) => {
     const response: ApiResponse<RunStatusResponse> = {
       success: true,
       data: stub,
+    };
+    res.json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/runs/verification-required — List runs awaiting email verification.
+ *
+ * Returns completed runs with outcome = VERIFICATION_REQUIRED so the console
+ * can surface them as an operator handoff queue.
+ *
+ * Production path: query apply_runs WHERE outcome = 'VERIFICATION_REQUIRED'
+ * joined with job_opportunities for company/jobTitle/jobUrl context.
+ * Stub returns an empty list until the DB layer is wired.
+ */
+runsRouter.get("/verification-required", (_req, res, next) => {
+  try {
+    const response: VerificationQueueResponse = {
+      success: true,
+      data: [],
+      message: `Runs awaiting email verification (${RunOutcome.VERIFICATION_REQUIRED}).`,
     };
     res.json(response);
   } catch (err) {

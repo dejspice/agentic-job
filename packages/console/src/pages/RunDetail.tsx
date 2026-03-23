@@ -412,6 +412,76 @@ export function RunDetail() {
               )}
             </SectionCard>
 
+            {/* Email Verification Required action panel */}
+            {status === "VERIFICATION_REQUIRED" && (
+              <div
+                style={{
+                  background: "#fffbeb",
+                  border: "2px solid #f59e0b",
+                  borderRadius: 12,
+                  padding: "16px 20px",
+                  marginBottom: 20,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#92400e",
+                    marginBottom: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  📧 Email Verification Required
+                </div>
+                <p style={{ margin: "0 0 12px", fontSize: 12, color: "#78350f", lineHeight: 1.6 }}>
+                  Greenhouse submitted the application but challenged it with
+                  an 8-character security code sent to the candidate's email.
+                  Open the job application URL below, check the email inbox,
+                  and enter the code to complete submission.
+                </p>
+                {run.jobUrl && (
+                  <a
+                    href={run.jobUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "7px 14px",
+                      background: "#b45309",
+                      color: "#ffffff",
+                      borderRadius: 7,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      textDecoration: "none",
+                      marginBottom: 10,
+                    }}
+                  >
+                    Open Application →
+                  </a>
+                )}
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: "8px 12px",
+                    background: "#fef3c7",
+                    borderRadius: 6,
+                    fontSize: 11,
+                    color: "#92400e",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <strong>Steps:</strong> 1. Open the application URL above &nbsp;·&nbsp;
+                  2. Check the candidate's email inbox for the Greenhouse code &nbsp;·&nbsp;
+                  3. Enter the 8-character code in the security code field
+                </div>
+              </div>
+            )}
+
             {/* Awaiting Review action panel */}
             {status === "REVIEW" && !decisionBanner && (
               <div

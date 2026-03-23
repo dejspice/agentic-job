@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { Topbar } from "../components/Topbar";
 import { ReviewQueueTable } from "../components/ReviewQueueTable";
 import { SectionCard } from "../components/SectionCard";
-import type { ReviewQueueItem, ReviewDecision, ReviewQueueStats } from "../types";
-import { getReviewQueue, getReviewQueueStats, approveRun, rejectRun } from "../lib/api";
+import type { ReviewQueueItem, ReviewDecision, ReviewQueueStats, VerificationQueueItem } from "../types";
+import { getReviewQueue, getReviewQueueStats, getVerificationQueue, approveRun, rejectRun } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,8 +58,18 @@ function QueueStatCard({ label, value, sub, color = "#0f172a" }: QueueStatCardPr
 // Page component
 // ---------------------------------------------------------------------------
 
+function formatCompletedAt(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 export function ReviewQueue() {
   const [items, setItems] = useState<ReviewQueueItem[]>([]);
+  const [verificationItems, setVerificationItems] = useState<VerificationQueueItem[]>([]);
   const [stats, setStats] = useState<ReviewQueueStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastDecision, setLastDecision] = useState<{
@@ -67,10 +78,11 @@ export function ReviewQueue() {
   } | null>(null);
 
   useEffect(() => {
-    Promise.all([getReviewQueue(), getReviewQueueStats()]).then(
-      ([queue, qstats]) => {
+    Promise.all([getReviewQueue(), getReviewQueueStats(), getVerificationQueue()]).then(
+      ([queue, qstats, vqueue]) => {
         setItems(queue);
         setStats(qstats);
+        setVerificationItems(vqueue);
         setLoading(false);
       },
     );
@@ -189,6 +201,113 @@ export function ReviewQueue() {
             sub="most recent arrival"
           />
         </div>
+
+        {/* Verification Required section */}
+        {(loading || verificationItems.length > 0) && (
+          <SectionCard
+            title="📧 Email Verification Required"
+            noPadding
+            style={{ marginBottom: 24, border: "1px solid #fde68a" }}
+            headerRight={
+              verificationItems.length > 0 ? (
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#b45309",
+                    background: "#fef3c7",
+                    padding: "2px 8px",
+                    borderRadius: 99,
+                    border: "1px solid #fde68a",
+                  }}
+                >
+                  {verificationItems.length} awaiting code
+                </span>
+              ) : undefined
+            }
+          >
+            {loading ? (
+              <div style={{ padding: "20px", color: "#94a3b8", fontSize: 13 }}>Loading…</div>
+            ) : verificationItems.length === 0 ? (
+              <div style={{ padding: "20px", color: "#94a3b8", fontSize: 13 }}>None pending.</div>
+            ) : (
+              <div>
+                <div style={{ padding: "10px 16px 6px", fontSize: 12, color: "#78350f", background: "#fffbeb", borderBottom: "1px solid #fde68a" }}>
+                  These runs submitted successfully. Greenhouse sent a verification code to the candidate's email.
+                  Open the application URL and enter the code to finalize submission.
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Company / Job", "Candidate", "Completed", "Action"].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: "10px 16px",
+                            textAlign: "left",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: "#64748b",
+                            letterSpacing: "0.05em",
+                            textTransform: "uppercase",
+                            borderBottom: "1px solid #fde68a",
+                            background: "#fffbeb",
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {verificationItems.map((item) => (
+                      <tr key={item.runId} style={{ borderBottom: "1px solid #fef3c7" }}>
+                        <td style={{ padding: "13px 16px", fontSize: 13 }}>
+                          <Link
+                            to={`/runs/${item.runId}`}
+                            style={{ color: "#b45309", textDecoration: "none", fontWeight: 600 }}
+                          >
+                            {item.company}
+                          </Link>
+                          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                            {item.jobTitle}
+                          </div>
+                        </td>
+                        <td style={{ padding: "13px 16px", fontSize: 12, fontFamily: "monospace", color: "#475569" }}>
+                          {item.candidateId}
+                        </td>
+                        <td style={{ padding: "13px 16px", fontSize: 12, color: "#78350f", fontWeight: 500 }}>
+                          {formatCompletedAt(item.completedAt)}
+                        </td>
+                        <td style={{ padding: "13px 16px" }}>
+                          <a
+                            href={item.jobUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              padding: "5px 12px",
+                              background: "#b45309",
+                              color: "#ffffff",
+                              borderRadius: 6,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              textDecoration: "none",
+                            }}
+                          >
+                            Open Application →
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </SectionCard>
+        )}
 
         {/* Info callout */}
         <div

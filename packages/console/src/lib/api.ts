@@ -31,8 +31,9 @@ import type {
   RunMode,
   RunOutcome,
   StateName,
+  VerificationQueueItem,
 } from "../types";
-import { MOCK_KPI_SNAPSHOTS, computeReviewQueueStats } from "./mock-data";
+import { MOCK_KPI_SNAPSHOTS, MOCK_VERIFICATION_QUEUE, computeReviewQueueStats } from "./mock-data";
 
 // ---------------------------------------------------------------------------
 // Shared fetch helper
@@ -209,6 +210,27 @@ export async function getReviewQueue(): Promise<ReviewQueueItem[]> {
 export async function getReviewQueueStats(): Promise<ReviewQueueStats> {
   const items = await getReviewQueue();
   return computeReviewQueueStats(items);
+}
+
+// ---------------------------------------------------------------------------
+// Verification required queue
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch runs awaiting email verification.
+ * GET /api/runs/verification-required
+ *
+ * Falls back to mock data when the endpoint is unavailable.
+ */
+export async function getVerificationQueue(): Promise<VerificationQueueItem[]> {
+  try {
+    const items = await apiFetch<VerificationQueueItem[]>(`/runs/verification-required`);
+    // Server stub returns [] — fall back to mock so the UI is populated
+    if (Array.isArray(items) && items.length > 0) return items;
+    return MOCK_VERIFICATION_QUEUE;
+  } catch {
+    return MOCK_VERIFICATION_QUEUE;
+  }
 }
 
 // ---------------------------------------------------------------------------

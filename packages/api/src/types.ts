@@ -133,6 +133,27 @@ export type AcceleratorListResponse = ApiResponse<
   Array<{ atsType: AtsType; version: number; successRate: number | null }>
 >;
 
+// --- Verification Required ---
+
+/**
+ * A run that submitted successfully but is gated behind an email
+ * verification code.  Surfaced so an operator can identify and
+ * manually complete the code-entry step.
+ */
+export interface VerificationQueueItem {
+  runId: string;
+  jobId: string;
+  candidateId: string;
+  company: string;
+  jobTitle: string;
+  jobUrl: string;
+  completedAt: string;
+  /** URL of the post-submit screenshot showing the security-code form. */
+  postSubmitScreenshotUrl?: string;
+}
+
+export type VerificationQueueResponse = ApiResponse<VerificationQueueItem[]>;
+
 // --- Review ---
 
 export interface ReviewQueueQuery {
