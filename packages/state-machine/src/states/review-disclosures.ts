@@ -6,10 +6,6 @@ import { pickBestOption } from "../screening/option-matcher.js";
 // EEO / voluntary self-identification field definitions
 // ---------------------------------------------------------------------------
 
-/**
- * Standard Greenhouse EEO field IDs present on virtually every Greenhouse
- * board.  These use stable selectors regardless of company.
- */
 const GREENHOUSE_STANDARD_EEO: ReadonlyArray<{
   selector: string;
   label: string;
@@ -22,7 +18,7 @@ const GREENHOUSE_STANDARD_EEO: ReadonlyArray<{
     label: "Gender",
     dataKey: "candidate.gender",
     fallback: "Male",
-    searchSeed: "Man",
+    searchSeed: "Mal",
   },
   {
     selector: "#hispanic_ethnicity",
@@ -47,10 +43,6 @@ const GREENHOUSE_STANDARD_EEO: ReadonlyArray<{
   },
 ];
 
-/**
- * Label patterns for Robinhood-style custom EEO dropdowns that use numeric
- * IDs (#1255 etc.).  Matched against labels found by EXTRACT_FIELDS.
- */
 const CUSTOM_EEO_PATTERNS: ReadonlyArray<{
   pattern: RegExp;
   dataKey: string;
@@ -83,6 +75,20 @@ const CUSTOM_EEO_PATTERNS: ReadonlyArray<{
   },
 ];
 
+const OPTION_SELECTORS: readonly string[] = [
+  "[id*='-option-']",
+  "[role='option']",
+  ".select__option",
+];
+
+const DISCLOSURE_CHECKBOX_SELECTORS: readonly string[] = [
+  "#gdpr_demographic_data_consent_given_1",
+  "input[name='gdpr_demographic_data_consent_given']",
+];
+
+const INTER_DROPDOWN_SETTLE_MS = 400;
+const SETTLE_SELECTOR = "#__rsd_settle_never_exists__";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -99,49 +105,70 @@ function resolveDataKey(data: Record<string, unknown>, dotPath: string): string 
 }
 
 /**
- * Fill a React Select EEO dropdown.
+ * Fill a React Select EEO dropdown using the proven sequential interaction
+ * pattern: scroll → click → 400ms delay → type search seed → wait for
+ * options → score & click best match → Escape to close menu.
  *
- * Clicks the visible .select__control wrapper (not the hidden input) to open
- * the dropdown without triggering scroll-into-view on the input element.
- * Then reads all visible options, scores against the desired value, and
- * clicks the best match by its stable React Select option ID.
+ * This mirrors fillReactSelect in answer-screening-questions.ts and the
+ * original apply_agent.py _interact_combobox timing.
  */
 async function fillEeoDropdown(
   context: StateContext,
   selector: string,
   desiredValue: string,
-  _searchSeed: string,
+  searchSeed: string,
 ): Promise<boolean> {
   if (!context.execute) return false;
 
-  const questionId = selector.replace(/^#/, "");
+  const attrMatch = selector.match(/^\[id="(.+)"\]$/);
+  const questionId = attrMatch ? attrMatch[1]! : selector.replace(/^#/, "");
+  const seed = searchSeed || desiredValue.substring(0, Math.min(desiredValue.length, 3));
 
-  // Click the visible dropdown control (the box the user sees) to open
-  // the menu.  The control is a sibling of the hidden combobox input inside
-  // the React Select container.  This avoids the scroll/click/type dance
-  // that the TYPE sequential path triggers on the hidden input.
-  // Click the visible .select__control box to open the dropdown menu.
-  // The DOM structure is: label[for=id] ~ .select-shell ... .select__control
-  // Never use TYPE sequential — that triggers scrollIntoView thrashing.
-  // Click the combobox input directly using page.click() which
-  // auto-scrolls and focuses.  This is the same mechanism that works
-  // for all screening question dropdowns.
-  const clickResult = await context.execute({
-    type: "CLICK",
-    target: { kind: "css", value: selector },
+  // TYPE sequential: scrollIntoView → click → 400ms delay → pressSequentially.
+  // This is the same proven pattern used for screening question dropdowns.
+  const typeResult = await context.execute({
+    type: "TYPE",
+    selector,
+    value: seed,
+    sequential: true,
   });
-  if (!clickResult.success) return false;
+  if (!typeResult.success) return false;
 
-  // Wait for options to render
-  const firstOptSelector = `#react-select-${questionId}-option-0`;
-  const optWait = await context.execute({
-    type: "WAIT_FOR",
-    target: firstOptSelector,
-    timeoutMs: 3000,
-  });
-  if (!optWait.success) return false;
+  // Wait for option elements to appear — primary selector gets a generous
+  // timeout, fallbacks are short.
+  let optionFound = false;
+  for (let i = 0; i < OPTION_SELECTORS.length; i++) {
+    const optWait = await context.execute({
+      type: "WAIT_FOR",
+      target: OPTION_SELECTORS[i]!,
+      timeoutMs: i === 0 ? 1500 : 500,
+    });
+    if (optWait.success) {
+      optionFound = true;
+      break;
+    }
+  }
 
-  // Extract all visible options in a single browser round-trip
+  if (!optionFound) {
+    // Seed filtered out all options — clear the input and re-open the menu
+    // with no filter text so all options are visible.
+    await context.execute({ type: "TYPE", selector, value: "", clearFirst: true });
+    await context.execute({ type: "TYPE", selector, value: "", sequential: true });
+    for (let i = 0; i < OPTION_SELECTORS.length; i++) {
+      const optWait = await context.execute({
+        type: "WAIT_FOR",
+        target: OPTION_SELECTORS[i]!,
+        timeoutMs: i === 0 ? 1500 : 500,
+      });
+      if (optWait.success) {
+        optionFound = true;
+        break;
+      }
+    }
+    if (!optionFound) return false;
+  }
+
+  // Extract visible option labels
   const extractResult = await context.execute({ type: "EXTRACT_OPTIONS" });
   const optionLabels = extractResult.success
     ? ((extractResult.data as Record<string, unknown>)?.options as string[] ?? [])
@@ -151,14 +178,66 @@ async function fillEeoDropdown(
     const best = pickBestOption(desiredValue, optionLabels);
     if (best) {
       const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
-      await context.execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+      const exists = await context.execute({
+        type: "WAIT_FOR",
+        target: winnerSelector,
+        timeoutMs: 500,
+      });
+      if (exists.success) {
+        await context.execute({
+          type: "CLICK",
+          target: { kind: "css", value: winnerSelector },
+        });
+        return true;
+      }
+    }
+  }
+
+  // Fallback: click first visible option element
+  for (const optSel of OPTION_SELECTORS) {
+    const exists = await context.execute({
+      type: "WAIT_FOR",
+      target: optSel,
+      timeoutMs: 500,
+    });
+    if (exists.success) {
+      await context.execute({ type: "CLICK", target: { kind: "css", value: optSel } });
       return true;
     }
   }
 
-  // Fallback: click first visible option
-  await context.execute({ type: "CLICK", target: { kind: "css", value: firstOptSelector } });
-  return true;
+  return false;
+}
+
+/**
+ * Check and click any required disclosure/consent checkboxes.
+ * Returns the labels of checkboxes that were successfully checked.
+ */
+async function handleDisclosureCheckboxes(
+  context: StateContext,
+): Promise<string[]> {
+  if (!context.execute) return [];
+  const checked: string[] = [];
+
+  for (const cbSelector of DISCLOSURE_CHECKBOX_SELECTORS) {
+    const exists = await context.execute({
+      type: "WAIT_FOR",
+      target: cbSelector,
+      timeoutMs: 500,
+    });
+    if (!exists.success) continue;
+
+    const clickResult = await context.execute({
+      type: "CHECK",
+      selector: cbSelector,
+      force: true,
+    });
+    if (clickResult.success) {
+      checked.push(cbSelector);
+    }
+  }
+
+  return checked;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,25 +265,14 @@ export const reviewDisclosuresState: StateHandler = {
     const skipped: string[] = [];
 
     // ── 1. Standard Greenhouse EEO fields ─────────────────────────────────
+    // These fields (#gender, #hispanic_ethnicity, #veteran_status,
+    // #disability_status) are NOT required on Greenhouse forms.
+    // Skip them — only fill required fields.
     for (const field of GREENHOUSE_STANDARD_EEO) {
-      const exists = await context.execute({
-        type: "WAIT_FOR",
-        target: field.selector,
-        timeoutMs: 500,
-      });
-      if (!exists.success) continue;
-
-      const desiredValue =
-        resolveDataKey(context.data, field.dataKey) ?? field.fallback;
-
-      const ok = await fillEeoDropdown(context, field.selector, desiredValue, field.searchSeed);
-      if (ok) filled.push(field.label);
-      else skipped.push(field.label);
+      skipped.push(field.label);
     }
 
     // ── 2. Custom EEO fields by numeric ID (Robinhood, etc.) ──────────────
-    // Extract all fields and find any unmatched numeric-ID comboboxes that
-    // correspond to EEO patterns.
     const extractResult = await context.execute({ type: "EXTRACT_FIELDS" });
     if (extractResult.success && extractResult.data) {
       const allFields = (extractResult.data as Record<string, unknown>).fields as Array<{
@@ -215,9 +283,11 @@ export const reviewDisclosuresState: StateHandler = {
         required: boolean;
       }>;
 
+      // Only process numeric-ID comboboxes that are still empty (not already
+      // filled by ANSWER_SCREENING_QUESTIONS)
       const customEeoFields = allFields.filter(
         (f) =>
-          f.selector.match(/^#\d+$/) &&
+          f.selector.match(/^\[id="\d+"\]$/) &&
           f.label &&
           f.role === "combobox" &&
           !f.value,
@@ -237,15 +307,29 @@ export const reviewDisclosuresState: StateHandler = {
         const ok = await fillEeoDropdown(context, field.selector, desiredValue, "");
         if (ok) filled.push(label);
         else skipped.push(label);
+
+        await context.execute({
+          type: "WAIT_FOR",
+          target: SETTLE_SELECTOR,
+          timeoutMs: INTER_DROPDOWN_SETTLE_MS,
+        });
       }
     }
 
+    // ── 3. Required disclosure / consent checkboxes ───────────────────────
+    const checkedBoxes = await handleDisclosureCheckboxes(context);
+
     context.data.disclosuresFilled = filled;
     context.data.disclosuresSkipped = skipped;
+    context.data.disclosureCheckboxes = checkedBoxes;
 
     return {
       outcome: "success",
-      data: { disclosuresFilled: filled, disclosuresSkipped: skipped },
+      data: {
+        disclosuresFilled: filled,
+        disclosuresSkipped: skipped,
+        disclosureCheckboxes: checkedBoxes,
+      },
     };
   },
 };

@@ -229,33 +229,35 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   },
 
   // ── EEO / voluntary self-identification ──────────────────────────────
+  // Search seeds are intentionally omitted so fillReactSelect uses the
+  // first 3 chars of the resolved value.  Custom EEO dropdowns (Robinhood
+  // etc.) have options like "Cisgender man" not "Male", so hardcoded
+  // seeds like "Male" filter to zero results.
   {
     name: "eeo_gender_identity",
     pattern: /gender\s*identity|describe.*gender/i,
     answer: { kind: "dataKey", path: "candidate.gender", fallback: "Male" },
     interaction: "react-select",
-    searchSeed: "Male",
   },
   {
     name: "eeo_race_ethnicity",
     pattern: /race.*ethnicity|ethnicity.*race|racial.*background|ethnic.*background|describe.*racial/i,
     answer: { kind: "dataKey", path: "candidate.raceEthnicity", fallback: "Asian" },
     interaction: "react-select",
-    searchSeed: "Asian",
   },
   {
     name: "eeo_military_status",
     pattern: /military\s*status|armed\s*forces|served.*military/i,
-    answer: { kind: "dataKey", path: "candidate.veteranStatus", fallback: "I am not a protected veteran" },
+    answer: { kind: "dataKey", path: "candidate.veteranStatus", fallback: "I have never served in the military" },
     interaction: "react-select",
-    searchSeed: "not a protected",
+    searchSeed: "",
   },
   {
     name: "eeo_disability_status",
     pattern: /disability\s*status|do\s*you\s*have.*disability|substantially\s*limits/i,
-    answer: { kind: "dataKey", path: "candidate.disabilityStatus", fallback: "No, I do not have a disability and have not had one in the past" },
+    answer: { kind: "dataKey", path: "candidate.disabilityStatus", fallback: "No, I don't have a disability" },
     interaction: "react-select",
-    searchSeed: "do not have",
+    searchSeed: "",
   },
   {
     name: "eeo_lgbtq",

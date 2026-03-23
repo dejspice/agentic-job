@@ -34,13 +34,12 @@ export const preSubmitCheckState: StateHandler = {
         role: string | null;
       }>;
 
-      // Exclude from empty-required sweep:
-      // - file inputs: browser security means .value is always empty after upload
-      // - combobox inputs (role="combobox"): React Select manages selection
-      //   state in React, not in the DOM input value.  The input is always
-      //   empty even when an option is selected.
+      // Exclude file inputs: browser security means .value is always empty
+      // after upload.  Combobox fields are NOT excluded — extract-fields
+      // reads .select__single-value for React Select comboboxes, so f.value
+      // is null only when no option is genuinely selected.
       const emptyRequired = fields.filter(
-        (f) => f.required && !f.value && f.type !== "file" && f.role !== "combobox",
+        (f) => f.required && !f.value && f.type !== "file",
       );
 
       if (emptyRequired.length > 0) {

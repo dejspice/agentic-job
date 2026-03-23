@@ -21,10 +21,16 @@ export async function executeExtractOptions(
     const options: string[] = await page.evaluate((): any => {
       const doc = (globalThis as any).document;
       const selectors = [
-        '[role="option"]',
         '[id*="-option-"]',
         ".select__option",
+        '[role="option"]',
       ];
+
+      function isVisible(el: any): boolean {
+        if (!el.offsetParent && el.style?.position !== "fixed") return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }
 
       const seen = new Set();
       const labels: string[] = [];
@@ -34,6 +40,7 @@ export async function executeExtractOptions(
         for (const el of Array.from(els) as any[]) {
           if (seen.has(el)) continue;
           seen.add(el);
+          if (!isVisible(el)) continue;
 
           const text = (el.textContent ?? "").trim();
           if (text.length > 0) {

@@ -42,13 +42,19 @@ const OPTION_SELECTORS: readonly string[] = [
  * delay before it accepts keystroke input for filtering.  Without the
  * delay, keystrokes are lost or misrouted.
  */
+function extractQuestionId(selector: string): string {
+  const attrMatch = selector.match(/^\[id="(.+)"\]$/);
+  if (attrMatch) return attrMatch[1]!;
+  return selector.replace(/^#/, "");
+}
+
 async function fillReactSelect(
   execute: CommandExecutor,
   selector: string,
   desiredValue: string,
   searchSeed?: string,
 ): Promise<boolean> {
-  const questionId = selector.replace(/^#/, "");
+  const questionId = extractQuestionId(selector);
 
   // The seed to type: use searchSeed if provided, else first 3 chars
   const seed = searchSeed
@@ -61,14 +67,15 @@ async function fillReactSelect(
   // before keystrokes are sent.
   await execute({ type: "TYPE", selector, value: seed, sequential: true });
 
-  // Step 5: wait for option elements to appear (2-3s timeout, generous
-  // to allow React Select filtering + any async option loading).
+  // Step 5: wait for option elements to appear.  The primary selector
+  // [id*='-option-'] gets a generous timeout; fallbacks are short since
+  // if React Select rendered options, they'd match the first selector.
   let optionFound = false;
-  for (const optSel of OPTION_SELECTORS) {
+  for (let i = 0; i < OPTION_SELECTORS.length; i++) {
     const optWait = await execute({
       type: "WAIT_FOR",
-      target: optSel,
-      timeoutMs: 2500,
+      target: OPTION_SELECTORS[i]!,
+      timeoutMs: i === 0 ? 1500 : 500,
     });
     if (optWait.success) {
       optionFound = true;
@@ -123,6 +130,7 @@ interface ExtractedQuestion {
   role: string | null;
   value: string | null;
   required: boolean;
+  maxLength: number | null;
 }
 
 export const answerScreeningQuestionsState: StateHandler = {
@@ -160,7 +168,7 @@ export const answerScreeningQuestionsState: StateHandler = {
     // questions that appear in the screening section.  Include both patterns.
     const questions = allFields.filter(
       (f) => f.selector.startsWith("#question_") && f.label
-        || (f.selector.match(/^#\d+$/) && f.label),
+        || (f.selector.match(/^\[id="\d+"\]$/) && f.label),
     );
 
     if (questions.length === 0) {
@@ -178,8 +186,12 @@ export const answerScreeningQuestionsState: StateHandler = {
         continue;
       }
 
-      const match: RuleMatchOutcome = matchScreeningQuestion(q.label, context.data);
+      if (!q.required) {
+        skipped.push(q.label);
+        continue;
+      }
 
+      const match: RuleMatchOutcome = matchScreeningQuestion(q.label, context.data);
 
       if (!match.matched) {
         // ── Unmatched required question handling ───────────────────────
@@ -204,26 +216,30 @@ export const answerScreeningQuestionsState: StateHandler = {
         }
 
         if (q.required && q.role !== "combobox") {
-          // Unmatched required text/textarea — use LLM fallback
           const answerGen = context.data.answerGenerator as AnswerGeneratorService | undefined;
           if (answerGen) {
+            const fieldLimit = q.maxLength ?? 200;
             const generated = await answerGen.generate(
               {
                 question: q.label,
                 fieldType: q.type as "text" | "textarea" | "select" | "radio" | "checkbox",
                 jobTitle: context.data.jobTitle as string | undefined,
                 company: context.data.company as string | undefined,
-                maxLength: 500,
+                maxLength: fieldLimit,
               },
               {},
               undefined,
             );
             if (generated) {
+              const answer = q.maxLength
+                ? generated.answer.slice(0, q.maxLength)
+                : generated.answer;
+              // Plain text fields don't need sequential typing — use fill()
+              // for speed. Only React Select comboboxes need pressSequentially.
               const typeResult = await context.execute({
                 type: "TYPE",
                 selector: q.selector,
-                value: generated.answer,
-                sequential: true,
+                value: answer,
               });
               if (typeResult.success) {
                 answered.push(q.label);
@@ -255,14 +271,11 @@ export const answerScreeningQuestionsState: StateHandler = {
           failed.push(q.label);
         }
       } else {
-        // Plain text input — use sequential typing (scroll → click → delay →
-        // pressSequentially) so React-controlled inputs and textareas properly
-        // process each keystroke via their onChange handlers.
+        const answer = q.maxLength ? value.slice(0, q.maxLength) : value;
         const typeResult = await context.execute({
           type: "TYPE",
           selector,
-          value,
-          sequential: true,
+          value: answer,
         });
 
         if (typeResult.success) {

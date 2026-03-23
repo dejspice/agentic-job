@@ -79,11 +79,21 @@ const ANSWER_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
   ["middle eastern or north african", ["middle eastern", "north african", "mena"]],
 
   // ── EEO veteran ──────────────────────────────────────────────────────
+  ["i have never served in the military",
+                      ["never served", "i am not a protected veteran",
+                       "not a protected veteran", "non-protected veteran",
+                       "i identify as a non-protected veteran"]],
   ["i am not a protected veteran",
                       ["not a protected veteran", "i'm not a protected veteran",
-                       "no, i am not", "non-protected veteran"]],
+                       "i have never served in the military",
+                       "i identify as a non-protected veteran",
+                       "non-protected veteran"]],
 
   // ── EEO disability ───────────────────────────────────────────────────
+  ["no, i don't have a disability",
+                      ["i do not have a disability", "no disability",
+                       "no, i do not have a disability and have not had one in the past",
+                       "i don't have a disability"]],
   ["no, i do not have a disability and have not had one in the past",
                       ["i do not have a disability", "no disability",
                        "no, i don't have a disability"]],

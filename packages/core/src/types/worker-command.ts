@@ -5,7 +5,8 @@ export type SelectorTarget =
 
 export type WorkerCommand =
   | { type: "NAVIGATE"; url: string }
-  | { type: "CLICK"; target: SelectorTarget }
+  | { type: "CLICK"; target: SelectorTarget; force?: boolean }
+  | { type: "CHECK"; selector: string; force?: boolean }
   | { type: "TYPE"; selector: string; value: string; clearFirst?: boolean; sequential?: boolean }
   | { type: "UPLOAD"; selector: string; filePath: string; triggerSelector?: string }
   | { type: "SELECT"; selector: string; value: string }

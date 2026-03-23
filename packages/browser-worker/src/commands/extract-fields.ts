@@ -8,6 +8,7 @@ export interface ExtractedField {
   label: string | null;
   required: boolean;
   value: string | null;
+  maxLength: number | null;
 }
 
 export async function executeExtractFields(
@@ -35,7 +36,12 @@ export async function executeExtractFields(
           return true;
         })
         .map((el: any) => {
-          const id = el.id ? `#${el.id}` : "";
+          let id = "";
+          if (el.id) {
+            // Numeric-only IDs are invalid CSS selectors (#1255 throws
+            // SyntaxError). Use attribute selector for those.
+            id = /^\d/.test(el.id) ? `[id="${el.id}"]` : `#${el.id}`;
+          }
           const name = el.name ? `[name="${el.name}"]` : "";
           const selector = id || name || el.tagName.toLowerCase();
 
@@ -66,6 +72,9 @@ export async function executeExtractFields(
             }
           }
 
+          const rawMax = el.getAttribute("maxlength");
+          const maxLength = rawMax ? parseInt(rawMax, 10) : null;
+
           return {
             selector,
             type: el.type || el.tagName.toLowerCase(),
@@ -74,6 +83,7 @@ export async function executeExtractFields(
             label,
             required: Boolean(el.required) || el.getAttribute("aria-required") === "true",
             value: fieldValue,
+            maxLength: maxLength && !isNaN(maxLength) ? maxLength : null,
           };
         });
     },

@@ -211,7 +211,7 @@ export function loadHarnessConfig(): HarnessConfig | null {
       industryExperience: "Yes, 8 years in SaaS and fintech.",
       gender: "Cisgender man",
       raceEthnicity: "South Asian",
-      veteranStatus: "I am not a protected veteran",
+      veteranStatus: "I have never served in the military",
       disabilityStatus: "No, I do not have a disability and have not had one in the past",
       hispanicLatino: "No",
     },
