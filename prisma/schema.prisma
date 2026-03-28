@@ -36,6 +36,7 @@ enum RunMode {
 
 enum RunOutcome {
   SUBMITTED
+  VERIFICATION_REQUIRED
   FAILED
   ESCALATED
   CANCELLED

@@ -133,6 +133,8 @@ export interface HarnessConfig {
   preSubmitDwellMs: number;
   /** Maximum run duration in ms before the harness aborts. Default 5 minutes. */
   maxRunMs: number;
+  /** Milliseconds to wait for operator to enter a verification code. Default 15 minutes. */
+  verificationCodeTimeoutMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +231,9 @@ export function loadHarnessConfig(): HarnessConfig | null {
     slowMo: parseInt(process.env["BROWSER_SLOW_MO_MS"] ?? "100", 10),
     preSubmitDwellMs: parseInt(process.env["PRE_SUBMIT_DWELL_MS"] ?? "2000", 10),
     maxRunMs: parseInt(process.env["MAX_RUN_MS"] ?? "300000", 10),
+    verificationCodeTimeoutMs: parseInt(
+      process.env["VERIFICATION_CODE_TIMEOUT_MS"] ?? "900000", 10, // 15 minutes default
+    ),
   };
 }
 
@@ -245,7 +250,11 @@ export function loadHarnessConfig(): HarnessConfig | null {
  * Returns true on success, false on failure.
  */
 export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
-  const { targetUrl, resumePath, candidate, provider, headless, artifactDir, runId, slowMo, preSubmitDwellMs, maxRunMs } = config;
+  const {
+    targetUrl, resumePath, candidate, provider, headless,
+    artifactDir, runId, slowMo, preSubmitDwellMs, maxRunMs,
+    verificationCodeTimeoutMs,
+  } = config;
 
   console.log("\n[greenhouse-live] ─────────────────────────────────");
   console.log(`[greenhouse-live] Run ID    : ${runId}`);
@@ -255,6 +264,7 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
   console.log(`[greenhouse-live] Slow-mo   : ${slowMo}ms`);
   console.log(`[greenhouse-live] Pre-submit: ${preSubmitDwellMs}ms`);
   console.log(`[greenhouse-live] Max run   : ${(maxRunMs / 1000).toFixed(0)}s`);
+  console.log(`[greenhouse-live] Code wait : ${(verificationCodeTimeoutMs / 60_000).toFixed(0)}m`);
   console.log(`[greenhouse-live] Artifact  : ${artifactDir}/${runId}/`);
   console.log("[greenhouse-live] ─────────────────────────────────\n");
 
@@ -371,9 +381,11 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
     // verification challenge, prompt the operator for the code NOW — before
     // the session is released — so we can enter it in the same page context.
     if (verificationRequired && session?.page) {
+      const waitMin = (verificationCodeTimeoutMs / 60_000).toFixed(0);
       console.log("[greenhouse-live] 🔑 Verification code required.");
       console.log("[greenhouse-live]    Check your email inbox for the code.");
-      const code = await promptForVerificationCode();
+      console.log(`[greenhouse-live]    Waiting up to ${waitMin} minute(s) for code entry.`);
+      const code = await promptForVerificationCode(verificationCodeTimeoutMs);
       if (code) {
         console.log("[greenhouse-live] Entering verification code…");
         const verifyResult = await enterVerificationCode(session.page, code);
@@ -413,16 +425,19 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
  * Prompt the operator for the Greenhouse security code via stdin.
  * Returns the trimmed code, or null if the operator skips or times out (5 min).
  */
-async function promptForVerificationCode(): Promise<string | null> {
+async function promptForVerificationCode(
+  timeoutMs: number,
+): Promise<string | null> {
   const { createInterface } = await import("node:readline");
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
 
     const timeout = setTimeout(() => {
       rl.close();
-      console.log("\n[greenhouse-live] Code entry timed out (5 minutes).");
+      const minutes = (timeoutMs / 60_000).toFixed(0);
+      console.log(`\n[greenhouse-live] Code entry timed out (${minutes} minutes).`);
       resolve(null);
-    }, 300_000);
+    }, timeoutMs);
 
     rl.question(
       "[greenhouse-live] Enter verification code (or press Enter to skip): ",

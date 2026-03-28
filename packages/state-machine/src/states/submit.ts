@@ -23,11 +23,13 @@ const CONFIRMATION_CSS_SELECTORS = [
   ".notice.success",
 ].join(", ");
 
+// Partial-text selectors (no quotes = substring match in Playwright)
 const CONFIRMATION_TEXT_SELECTORS = [
-  'text="Thank you for your interest"',
-  'text="Thank you for applying"',
-  'text="application has been submitted"',
-  'text="View more jobs"',
+  "text=Thank you for your interest",
+  "text=Thank you for applying",
+  "text=application has been submitted",
+  "text=View more jobs at",
+  "text=Your application has been received",
 ];
 
 /**
@@ -99,7 +101,7 @@ export const submitState: StateHandler = {
         const textWait = await context.execute({
           type: "WAIT_FOR",
           target: textSel,
-          timeoutMs: 3000,
+          timeoutMs: 5000,
         });
         if (textWait.success) {
           waitResult = textWait;

@@ -473,4 +473,80 @@ describe("persistRunResult", () => {
       assert.equal(mock.calls[0]?.data.confirmationId, null);
     });
   });
+
+  // ── VERIFICATION_REQUIRED outcome ─────────────────────────────────────────
+
+  describe("VERIFICATION_REQUIRED outcome", () => {
+    it("persists correctly when Greenhouse returns a verification challenge", async () => {
+      const payload: RunResultPayload = {
+        outcome: RunOutcome.VERIFICATION_REQUIRED,
+        finalState: StateName.SUBMIT,
+        statesCompleted: [
+          StateName.INIT,
+          StateName.OPEN_JOB_PAGE,
+          StateName.FILL_REQUIRED_FIELDS,
+          StateName.ANSWER_SCREENING_QUESTIONS,
+          StateName.REVIEW_DISCLOSURES,
+          StateName.PRE_SUBMIT_CHECK,
+          StateName.SUBMIT,
+        ],
+        errors: [],
+        artifactUrls: {
+          screenshots: {
+            "SUBMIT/post-submit": "memory://run-vr-001/SUBMIT/post-submit.png",
+          },
+        },
+      };
+
+      await persistRunResult(RUN_ID, payload, mock.prisma);
+
+      assert.equal(mock.calls[0]?.data.outcome, RunOutcome.VERIFICATION_REQUIRED);
+      assert.equal(mock.calls[0]?.data.currentState, StateName.SUBMIT);
+      assert.equal(
+        mock.calls[0]?.data.confirmationId,
+        null,
+        "confirmationId is null — candidate must complete email verification",
+      );
+    });
+
+    it("is distinct from SUBMITTED and FAILED", () => {
+      assert.notEqual(RunOutcome.VERIFICATION_REQUIRED, RunOutcome.SUBMITTED);
+      assert.notEqual(RunOutcome.VERIFICATION_REQUIRED, RunOutcome.FAILED);
+    });
+
+    it("produces an empty errorLogJson (form was submitted successfully)", async () => {
+      const payload: RunResultPayload = {
+        outcome: RunOutcome.VERIFICATION_REQUIRED,
+        finalState: StateName.SUBMIT,
+        statesCompleted: [StateName.INIT, StateName.SUBMIT],
+        errors: [],
+        artifactUrls: {},
+      };
+
+      await persistRunResult(RUN_ID, payload, mock.prisma);
+
+      const errorLog = mock.calls[0]?.data.errorLogJson as unknown[];
+      assert.deepEqual(errorLog, []);
+    });
+
+    it("all state history entries have outcome=success (no errors)", async () => {
+      const payload: RunResultPayload = {
+        outcome: RunOutcome.VERIFICATION_REQUIRED,
+        finalState: StateName.SUBMIT,
+        statesCompleted: [StateName.INIT, StateName.OPEN_JOB_PAGE, StateName.SUBMIT],
+        errors: [],
+        artifactUrls: {},
+      };
+
+      await persistRunResult(RUN_ID, payload, mock.prisma);
+
+      const history = mock.calls[0]?.data.stateHistoryJson as Array<{
+        outcome: string;
+      }>;
+      assert.ok(
+        history.every((h) => h.outcome === "success"),
+        "All states should be success — the application was submitted",
+      );
+    });
+  });
 });
