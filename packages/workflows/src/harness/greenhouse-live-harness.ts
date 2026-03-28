@@ -117,6 +117,7 @@ export interface HarnessConfig {
     veteranStatus?: string;
     disabilityStatus?: string;
     hispanicLatino?: string;
+    whyCompany?: string;
   };
   /** Browser provider to use for session allocation. */
   provider: RuntimeProvider;
@@ -217,6 +218,7 @@ export function loadHarnessConfig(): HarnessConfig | null {
       veteranStatus: "I have never served in the military",
       disabilityStatus: "No, I do not have a disability and have not had one in the past",
       hispanicLatino: "No",
+      whyCompany: process.env["GREENHOUSE_WHY_COMPANY"]?.trim() || undefined,
     },
     provider,
     headless: process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false",

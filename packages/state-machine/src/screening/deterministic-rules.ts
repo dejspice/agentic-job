@@ -155,6 +155,14 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     searchSeed: "never",
   },
 
+  // ── Why this company / role (free-text motivation) ────────────────────
+  {
+    name: "why_company",
+    pattern: /why\s+\w+\??\s*$|why\s+are\s+you\s+interested|why\s+do\s+you\s+want|what\s+draws\s+you|what\s+excites\s+you|what\s+interests\s+you|why\s+this\s+(company|role|position|team|opportunity)/i,
+    answer: { kind: "dataKey", path: "candidate.whyCompany", fallback: "I am deeply interested in the mission and the technical challenges here. My background in analytics and data-driven product development aligns directly with the work being done, and I am excited to contribute to a team that values rigorous thinking and measurable impact." },
+    interaction: "text",
+  },
+
   // ── Open to in-person / office work ───────────────────────────────────
   {
     name: "open_to_in_person",
