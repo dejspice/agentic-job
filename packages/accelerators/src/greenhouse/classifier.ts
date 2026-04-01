@@ -88,6 +88,30 @@ export const greenhouseClassifiers: PageClassifier[] = [
     confidence: 0.9,
   },
   {
+    name: "embedded_form",
+    selectors: [
+      'iframe[src*="boards.greenhouse.io"]',
+      'iframe[src*="grnh.se"]',
+    ],
+    confidence: 0.9,
+  },
+  {
+    name: "verification_challenge",
+    selectors: [
+      'input[name="security_code"]',
+      '#security_code',
+      'input[maxlength="1"]',
+      '.security-code',
+    ],
+    textPatterns: [
+      "verification code was sent",
+      "Security code",
+      "confirm you're a human",
+      "enter the 8-character code",
+    ],
+    confidence: 0.95,
+  },
+  {
     name: "confirmation",
     selectors: [
       ".application-confirmation",

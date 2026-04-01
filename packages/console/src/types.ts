@@ -101,7 +101,7 @@ export interface KpiSnapshot {
   generatedAt: string;
 
   // ── Primary KPIs ──────────────────────────────────────────────────────
-  /** % of completed runs that ended as SUBMITTED. */
+  /** % of completed runs that ended as SUBMITTED or VERIFICATION_REQUIRED. */
   successRate: KpiValue;
   /** % of runs that required at least one human intervention (HITL). */
   hitlRate: KpiValue;
