@@ -10,7 +10,7 @@ const GREENHOUSE_SUBMIT_SELECTORS =
  * Expanded beyond the canonical Greenhouse classes to cover boards that use
  * alternate confirmation element names or flash notice patterns.
  */
-const CONFIRMATION_WAIT_SELECTORS = [
+const CONFIRMATION_CSS_SELECTORS = [
   ".application-confirmation",
   "#application_confirmation",
   ".flash-success",
@@ -22,6 +22,40 @@ const CONFIRMATION_WAIT_SELECTORS = [
   ".flash.notice",
   ".notice.success",
 ].join(", ");
+
+// Partial-text selectors (no quotes = substring match in Playwright)
+const CONFIRMATION_TEXT_SELECTORS = [
+  "text=Thank you for your interest",
+  "text=Thank you for applying",
+  "text=application has been submitted",
+  "text=View more jobs at",
+  "text=Your application has been received",
+];
+
+/**
+ * Selectors that indicate a verification-code challenge was presented.
+ * Greenhouse sends an 8-character or 6-digit code to the applicant's email
+ * when it detects potential bot behavior.  The form IS submitted — the
+ * candidate just needs to enter the code to finalize.
+ *
+ * Robinhood and other boards render 8 separate single-character inputs with
+ * no shared name/class — matched via page text instead.
+ */
+const VERIFICATION_CHALLENGE_SELECTORS = [
+  'input[name="security_code"]',
+  'input[placeholder*="code"]',
+  'input[aria-label*="code"]',
+  ".security-code",
+  "#security_code",
+].join(", ");
+
+const VERIFICATION_CHALLENGE_TEXT_SELECTORS = [
+  "text=verification code was sent",
+  "text=confirm you're a human",
+  "text=Security code",
+  "text=enter the 8-character code",
+  "text=enter the 6-digit code",
+];
 
 export const submitState: StateHandler = {
   name: StateName.SUBMIT,
@@ -43,20 +77,38 @@ export const submitState: StateHandler = {
       (context.data.artifacts as unknown[]).push(ref);
     }
 
+    // force: true bypasses Playwright's actionability check — the EEOC
+    // section's tall legal content can visually overlap the submit button
+    // and Playwright refuses to click through it without force.
     const clickResult = await context.execute({
       type: "CLICK",
       target: { kind: "css", value: GREENHOUSE_SUBMIT_SELECTORS },
+      force: true,
     });
 
     if (!clickResult.success) {
       return { outcome: "failure", error: clickResult.error ?? "Submit click failed" };
     }
 
-    const waitResult = await context.execute({
+    // Try CSS selectors first, then Playwright text selectors
+    let waitResult = await context.execute({
       type: "WAIT_FOR",
-      target: CONFIRMATION_WAIT_SELECTORS,
-      timeoutMs: 10000,
+      target: CONFIRMATION_CSS_SELECTORS,
+      timeoutMs: 5000,
     });
+    if (!waitResult.success) {
+      for (const textSel of CONFIRMATION_TEXT_SELECTORS) {
+        const textWait = await context.execute({
+          type: "WAIT_FOR",
+          target: textSel,
+          timeoutMs: 5000,
+        });
+        if (textWait.success) {
+          waitResult = textWait;
+          break;
+        }
+      }
+    }
 
     // Always capture post-submit screenshot regardless of confirmation outcome —
     // it is the permanent audit record that the submit button was activated.
@@ -67,6 +119,41 @@ export const submitState: StateHandler = {
     }
 
     if (!waitResult.success) {
+      // Check for verification-code challenge.  When Greenhouse suspects
+      // automation it sends a code to the applicant's email rather than
+      // immediately showing a confirmation page.  The application IS
+      // submitted — it is simply gated behind the code entry.
+      // We return success with verificationRequired=true so the harness
+      // can log this as VERIFICATION_REQUIRED rather than a hard failure.
+      let verificationCheck = await context.execute({
+        type: "WAIT_FOR",
+        target: VERIFICATION_CHALLENGE_SELECTORS,
+        timeoutMs: 2000,
+      });
+
+      if (!verificationCheck.success) {
+        for (const textSel of VERIFICATION_CHALLENGE_TEXT_SELECTORS) {
+          const textWait = await context.execute({
+            type: "WAIT_FOR",
+            target: textSel,
+            timeoutMs: 1500,
+          });
+          if (textWait.success) {
+            verificationCheck = textWait;
+            break;
+          }
+        }
+      }
+
+      if (verificationCheck.success) {
+        context.data.submitted = true;
+        context.data.verificationRequired = true;
+        return {
+          outcome: "success",
+          data: { verificationRequired: true },
+        };
+      }
+
       return {
         outcome: "failure",
         error: "Confirmation page did not appear after submit",

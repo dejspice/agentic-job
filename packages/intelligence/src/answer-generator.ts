@@ -152,18 +152,26 @@ export function createAnswerGenerator(
 
       const result = await provider.complete<{ answer: string; confidence: number }>({
         systemPrompt:
-          "You are a job application assistant. Generate a concise, professional answer " +
-          "for the given screening question. Respond with JSON: { answer, confidence }.",
+          "You are a job application assistant filling out screening questions on an ATS form.\n\n" +
+          "Rules:\n" +
+          "- Write concise, professional answers (2-4 sentences for text fields, 1 sentence for short fields)\n" +
+          "- Be specific and relevant to the role and company\n" +
+          "- Draw on the candidate profile provided — do not invent credentials\n" +
+          "- For yes/no questions, answer directly then briefly explain\n" +
+          "- For experience questions, reference real skills from the profile\n" +
+          "- For 'why this company/role' questions, connect the candidate's background to the role\n" +
+          "- Never exceed 500 characters unless explicitly told otherwise\n" +
+          "- Respond with JSON: { \"answer\": \"<your answer>\", \"confidence\": 0.0-1.0 }",
         userPrompt: JSON.stringify({
           question: request.question,
           fieldType: request.fieldType,
           options: request.options,
           jobTitle: request.jobTitle,
           company: request.company,
-          maxLength: request.maxLength,
+          maxLength: request.maxLength ?? 500,
           candidateProfile: profile,
         }),
-        maxOutputTokens: 500,
+        maxOutputTokens: 300,
         temperature: 0.3,
       });
 

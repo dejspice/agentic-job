@@ -31,8 +31,9 @@ import type {
   RunMode,
   RunOutcome,
   StateName,
+  VerificationQueueItem,
 } from "../types";
-import { MOCK_KPI_SNAPSHOTS, computeReviewQueueStats } from "./mock-data";
+import { MOCK_KPI_SNAPSHOTS, MOCK_VERIFICATION_QUEUE, computeReviewQueueStats } from "./mock-data";
 
 // ---------------------------------------------------------------------------
 // Shared fetch helper
@@ -140,18 +141,24 @@ function toRunDetail(r: ApiApplyRun, status?: ApiRunStatus): RunDetailView {
 }
 
 // ---------------------------------------------------------------------------
-// KPI — mock fallback (GET /api/runs/kpi not yet implemented server-side)
+// KPI — real endpoint with mock fallback on error
 // ---------------------------------------------------------------------------
 
 /**
  * Fetch the KPI snapshot for a given observation period.
  *
- * The /api/runs/kpi aggregation endpoint does not yet exist.
- * Returns mock data until the server-side endpoint is wired.
+ * GET /api/runs/kpi?period=<period>
+ *
+ * Falls back to local mock data only when the API is unavailable (e.g. dev
+ * with no running server), so the dashboard always renders something useful.
  */
 export async function getKpiSnapshot(period: KpiPeriod): Promise<KpiSnapshot> {
-  // TODO: replace with real fetch once GET /api/runs/kpi?period=${period} lands
-  return Promise.resolve(MOCK_KPI_SNAPSHOTS[period]);
+  try {
+    const snapshot = await apiFetch<KpiSnapshot>(`/runs/kpi?period=${period}`);
+    return snapshot;
+  } catch {
+    return MOCK_KPI_SNAPSHOTS[period];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +219,27 @@ export async function getReviewQueueStats(): Promise<ReviewQueueStats> {
 }
 
 // ---------------------------------------------------------------------------
+// Verification required queue
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch runs awaiting email verification.
+ * GET /api/runs/verification-required
+ *
+ * Falls back to mock data when the endpoint is unavailable.
+ */
+export async function getVerificationQueue(): Promise<VerificationQueueItem[]> {
+  try {
+    const items = await apiFetch<VerificationQueueItem[]>(`/runs/verification-required`);
+    return Array.isArray(items) ? items : [];
+  } catch {
+    // API unavailable — degrade gracefully with mock data so the UI
+    // remains functional during development / offline use.
+    return MOCK_VERIFICATION_QUEUE;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Review decisions
 // ---------------------------------------------------------------------------
 
@@ -227,6 +255,24 @@ export async function approveRun(
     method: "POST",
     body: JSON.stringify({ approved: true, ...opts }),
   });
+}
+
+/**
+ * Submit a Greenhouse security code for a VERIFICATION_REQUIRED run.
+ * POST /api/runs/:runId/verification-code
+ */
+export async function submitVerificationCode(
+  runId: string,
+  code: string,
+): Promise<{ signalSent: boolean }> {
+  const result = await apiFetch<{ runId: string; signalSent: boolean }>(
+    `/runs/${runId}/verification-code`,
+    {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    },
+  );
+  return result;
 }
 
 /**

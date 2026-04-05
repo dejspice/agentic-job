@@ -16,6 +16,7 @@ import type {
   ReviewQueueStats,
   RunSummary,
   ReviewQueueItem,
+  VerificationQueueItem,
 } from "../types";
 import { RunMode, RunOutcome, StateName } from "../types";
 
@@ -46,40 +47,43 @@ export const MOCK_KPI_SNAPSHOTS: Record<KpiPeriod, KpiSnapshot> = {
   "24h": {
     period: "24h",
     generatedAt: new Date().toISOString(),
-    successRate:       kv(88.5,  84.2, pct),
-    hitlRate:          kv(10.1,  12.3, pct),
-    llmCostUsd:        kv(0.82,  0.97, usd),
-    deterministicRate: kv(93.2,  91.4, pct),
-    totalRuns:         kv(21,    18,   int),
-    submittedRuns:     kv(18,    15,   int),
-    failedRuns:        kv(2,     3,    int),
-    avgRunDurationSec: kv(174,   192,  dur),
+    successRate:              kv(88.5,  84.2, pct),
+    hitlRate:                 kv(10.1,  12.3, pct),
+    llmCostUsd:               kv(0.82,  0.97, usd),
+    deterministicRate:        kv(93.2,  91.4, pct),
+    totalRuns:                kv(21,    18,   int),
+    submittedRuns:            kv(18,    15,   int),
+    failedRuns:               kv(2,     3,    int),
+    verificationRequiredRuns: kv(1,     0,    int),
+    avgRunDurationSec:        kv(174,   192,  dur),
     reviewPendingCount: 4,
   },
   "7d": {
     period: "7d",
     generatedAt: new Date().toISOString(),
-    successRate:       kv(84.2,  79.1, pct),
-    hitlRate:          kv(12.3,  18.7, pct),
-    llmCostUsd:        kv(4.82,  5.91, usd),
-    deterministicRate: kv(91.4,  88.2, pct),
-    totalRuns:         kv(142,   124,  int),
-    submittedRuns:     kv(119,   98,   int),
-    failedRuns:        kv(14,    18,   int),
-    avgRunDurationSec: kv(192,   218,  dur),
+    successRate:              kv(84.2,  79.1, pct),
+    hitlRate:                 kv(12.3,  18.7, pct),
+    llmCostUsd:               kv(4.82,  5.91, usd),
+    deterministicRate:        kv(91.4,  88.2, pct),
+    totalRuns:                kv(142,   124,  int),
+    submittedRuns:            kv(119,   98,   int),
+    failedRuns:               kv(14,    18,   int),
+    verificationRequiredRuns: kv(5,     3,    int),
+    avgRunDurationSec:        kv(192,   218,  dur),
     reviewPendingCount: 4,
   },
   "30d": {
     period: "30d",
     generatedAt: new Date().toISOString(),
-    successRate:       kv(81.7,  76.4, pct),
-    hitlRate:          kv(15.8,  23.1, pct),
-    llmCostUsd:        kv(18.94, 26.12, usd),
-    deterministicRate: kv(89.1,  84.0, pct),
-    totalRuns:         kv(614,   531,  int),
-    submittedRuns:     kv(501,   406,  int),
-    failedRuns:        kv(79,    102,  int),
-    avgRunDurationSec: kv(210,   243,  dur),
+    successRate:              kv(81.7,  76.4, pct),
+    hitlRate:                 kv(15.8,  23.1, pct),
+    llmCostUsd:               kv(18.94, 26.12, usd),
+    deterministicRate:        kv(89.1,  84.0, pct),
+    totalRuns:                kv(614,   531,  int),
+    submittedRuns:            kv(501,   406,  int),
+    failedRuns:               kv(79,    102,  int),
+    verificationRequiredRuns: kv(20,    14,   int),
+    avgRunDurationSec:        kv(210,   243,  dur),
     reviewPendingCount: 4,
   },
 };
@@ -173,6 +177,20 @@ export const MOCK_RECENT_RUNS: RunSummary[] = [
     startedAt: new Date(Date.now() - 10_800_000).toISOString(),
     completedAt: new Date(Date.now() - 10_200_000).toISOString(),
   },
+  {
+    id: "run-007",
+    jobId: "job-007",
+    jobTitle: "SEO Analyst",
+    company: "Robinhood",
+    candidateId: "cand-001",
+    mode: RunMode.FULL_AUTO,
+    outcome: RunOutcome.VERIFICATION_REQUIRED,
+    currentState: StateName.SUBMIT,
+    percentComplete: 100,
+    humanInterventions: 0,
+    startedAt: new Date(Date.now() - 2_400_000).toISOString(),
+    completedAt: new Date(Date.now() - 2_340_000).toISOString(),
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -225,6 +243,27 @@ export const MOCK_REVIEW_QUEUE: ReviewQueueItem[] = [
     waitingSince: new Date(Date.now() - 720_000).toISOString(),
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Verification required queue
+// ---------------------------------------------------------------------------
+
+export const MOCK_VERIFICATION_QUEUE: VerificationQueueItem[] = [
+  {
+    runId: "run-007",
+    jobId: "job-007",
+    candidateId: "cand-001",
+    company: "Robinhood",
+    jobTitle: "SEO Analyst",
+    jobUrl: "https://job-boards.greenhouse.io/robinhood/jobs/7592180",
+    completedAt: new Date(Date.now() - 2_400_000).toISOString(),
+    postSubmitScreenshotUrl: undefined,
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Review queue stats
+// ---------------------------------------------------------------------------
 
 /** Derived from MOCK_REVIEW_QUEUE — kept in sync for use in stats panel. */
 export function computeReviewQueueStats(

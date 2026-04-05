@@ -8,6 +8,7 @@ export type WorkflowPhase =
   | "initializing"
   | "running"
   | "waiting_review"
+  | "awaiting_verification"
   | "submitting"
   | "capturing"
   | "completed"

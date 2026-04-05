@@ -32,3 +32,23 @@ export interface CancelRequestPayload {
 export const cancelRequestSignal = defineSignal<[CancelRequestPayload]>(
   "cancelRequest",
 );
+
+/**
+ * Payload sent when an operator supplies the email verification code for a
+ * VERIFICATION_REQUIRED Greenhouse run.
+ */
+export interface VerificationCodePayload {
+  /** The 8-character (or shorter) security code sent to the candidate's email. */
+  code: string;
+}
+
+/**
+ * Signal sent to the apply workflow to supply the Greenhouse verification code.
+ *
+ * The workflow blocks in "awaiting_verification" phase until this signal
+ * is received (or the 24-hour timeout expires).  When received, the workflow
+ * runs enterVerificationCodeActivity to enter the code and finalise submission.
+ */
+export const verificationCodeSignal = defineSignal<[VerificationCodePayload]>(
+  "verificationCode",
+);

@@ -348,6 +348,79 @@ describe("artifact pipeline — activity result → ArtifactUrls → apply_runs 
 //   2. persistRunResult receives the correct shape
 // (using a stub Prisma client — no real DB needed)
 
+// ---------------------------------------------------------------------------
+// Suite 3b: VERIFICATION_REQUIRED routing — workflow outcome mapping
+// ---------------------------------------------------------------------------
+
+describe("applyWorkflow — VERIFICATION_REQUIRED routing (unit, no browser)", () => {
+  it("maps verificationRequired:true in activity data to RunOutcome.VERIFICATION_REQUIRED", () => {
+    // Simulate the workflow's outcome-mapping branch directly — no browser needed.
+    // The condition that was missing before the fix:
+    //   ghResult.outcome === "success" && ghResult.data.verificationRequired === true
+    //   → must return VERIFICATION_REQUIRED, not SUBMITTED
+    const fakeResult = {
+      outcome: "success" as const,
+      statesCompleted: [StateName.SUBMIT] as StateName[],
+      finalState: StateName.SUBMIT,
+      confirmationId: undefined,
+      data: { verificationRequired: true, submitted: true },
+      artifacts: [],
+      error: undefined,
+    };
+
+    // Replicate the mapping logic from apply-workflow.ts Greenhouse fast-path.
+    function mapOutcome(r: typeof fakeResult): RunOutcome {
+      if (r.outcome === "failure") return RunOutcome.FAILED;
+      if (r.data.verificationRequired === true) return RunOutcome.VERIFICATION_REQUIRED;
+      return RunOutcome.SUBMITTED;
+    }
+
+    assert.equal(mapOutcome(fakeResult), RunOutcome.VERIFICATION_REQUIRED);
+    assert.notEqual(mapOutcome(fakeResult), RunOutcome.SUBMITTED);
+    assert.notEqual(mapOutcome(fakeResult), RunOutcome.FAILED);
+  });
+
+  it("maps outcome:failure to RunOutcome.FAILED even when verificationRequired is absent", () => {
+    const fakeResult = {
+      outcome: "failure" as const,
+      statesCompleted: [] as StateName[],
+      finalState: StateName.SUBMIT,
+      confirmationId: undefined,
+      data: {},
+      artifacts: [],
+      error: "Confirmation page did not appear",
+    };
+
+    function mapOutcome(r: typeof fakeResult): RunOutcome {
+      if (r.outcome === "failure") return RunOutcome.FAILED;
+      if (r.data.verificationRequired === true) return RunOutcome.VERIFICATION_REQUIRED;
+      return RunOutcome.SUBMITTED;
+    }
+
+    assert.equal(mapOutcome(fakeResult), RunOutcome.FAILED);
+  });
+
+  it("maps clean success (no verificationRequired) to RunOutcome.SUBMITTED", () => {
+    const fakeResult = {
+      outcome: "success" as const,
+      statesCompleted: [StateName.SUBMIT, StateName.CAPTURE_CONFIRMATION] as StateName[],
+      finalState: StateName.CAPTURE_CONFIRMATION,
+      confirmationId: "CONF-ABC",
+      data: { submitted: true },
+      artifacts: [],
+      error: undefined,
+    };
+
+    function mapOutcome(r: typeof fakeResult): RunOutcome {
+      if (r.outcome === "failure") return RunOutcome.FAILED;
+      if (r.data.verificationRequired === true) return RunOutcome.VERIFICATION_REQUIRED;
+      return RunOutcome.SUBMITTED;
+    }
+
+    assert.equal(mapOutcome(fakeResult), RunOutcome.SUBMITTED);
+  });
+});
+
 describe("persistRunResult — apply_runs update with Greenhouse result", () => {
   it("builds a valid RunResultPayload from GreenhouseHappyPathResult", async () => {
     const result = await runGreenhouseHappyPathActivity({

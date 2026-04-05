@@ -5,7 +5,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { RunTimeline } from "../components/RunTimeline";
 import { StateName } from "../types";
 import type { RunDetailView, RunStatus } from "../types";
-import { getRunDetail, approveRun, rejectRun } from "../lib/api";
+import { getRunDetail, approveRun, rejectRun, submitVerificationCode } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,6 +89,12 @@ export function RunDetail() {
   const [deciding, setDeciding] = useState(false);
   const [decisionBanner, setDecisionBanner] = useState<{
     approved: boolean;
+  } | null>(null);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verifySubmitting, setVerifySubmitting] = useState(false);
+  const [verifyBanner, setVerifyBanner] = useState<{
+    ok: boolean;
+    msg: string;
   } | null>(null);
 
   useEffect(() => {
@@ -411,6 +417,158 @@ export function RunDetail() {
                 </p>
               )}
             </SectionCard>
+
+            {/* Email Verification Required action panel */}
+            {status === "VERIFICATION_REQUIRED" && (
+              <div
+                style={{
+                  background: "#fffbeb",
+                  border: "2px solid #f59e0b",
+                  borderRadius: 12,
+                  padding: "16px 20px",
+                  marginBottom: 20,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "#92400e",
+                    marginBottom: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  📧 Email Verification Required
+                </div>
+
+                {/* Code entry banner */}
+                {verifyBanner && (
+                  <div
+                    style={{
+                      marginBottom: 12,
+                      padding: "8px 12px",
+                      background: verifyBanner.ok ? "#dcfce7" : "#fee2e2",
+                      border: `1px solid ${verifyBanner.ok ? "#bbf7d0" : "#fecaca"}`,
+                      borderRadius: 6,
+                      fontSize: 12,
+                      color: verifyBanner.ok ? "#15803d" : "#b91c1c",
+                      display: "flex",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <span>{verifyBanner.msg}</span>
+                    <button
+                      onClick={() => setVerifyBanner(null)}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "inherit", padding: "0 4px" }}
+                    >×</button>
+                  </div>
+                )}
+
+                <p style={{ margin: "0 0 12px", fontSize: 12, color: "#78350f", lineHeight: 1.6 }}>
+                  Greenhouse submitted the application but challenged it with
+                  an 8-character security code sent to the candidate's email.
+                  Check the inbox, then enter the code below to complete submission.
+                </p>
+
+                {/* Code input + submit */}
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+                  <input
+                    type="text"
+                    placeholder="Enter 8-character code"
+                    maxLength={10}
+                    value={verificationCode}
+                    onChange={(e) =>
+                      setVerificationCode(e.target.value.trim().toUpperCase())
+                    }
+                    style={{
+                      flex: 1,
+                      padding: "7px 12px",
+                      fontSize: 14,
+                      fontFamily: "monospace",
+                      fontWeight: 700,
+                      letterSpacing: "0.15em",
+                      border: "1px solid #f59e0b",
+                      borderRadius: 7,
+                      background: "#ffffff",
+                      color: "#92400e",
+                      outline: "none",
+                    }}
+                  />
+                  <button
+                    disabled={verifySubmitting || verificationCode.length < 4}
+                    onClick={async () => {
+                      if (!runId || verifySubmitting) return;
+                      setVerifySubmitting(true);
+                      try {
+                        const result = await submitVerificationCode(
+                          runId,
+                          verificationCode,
+                        );
+                        setVerifyBanner({
+                          ok: true,
+                          msg: result.signalSent
+                            ? "✓ Code sent to workflow — submission in progress."
+                            : "✓ Code received. Open the job URL to enter it manually.",
+                        });
+                        setVerificationCode("");
+                        getRunDetail(runId).then(setRun).catch(console.error);
+                      } catch (e) {
+                        setVerifyBanner({
+                          ok: false,
+                          msg: `Failed to submit code: ${(e as Error).message}`,
+                        });
+                      } finally {
+                        setVerifySubmitting(false);
+                      }
+                    }}
+                    style={{
+                      padding: "7px 16px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      borderRadius: 7,
+                      border: "none",
+                      background:
+                        verifySubmitting || verificationCode.length < 4
+                          ? "#fde68a"
+                          : "#b45309",
+                      color: "#ffffff",
+                      cursor:
+                        verifySubmitting || verificationCode.length < 4
+                          ? "not-allowed"
+                          : "pointer",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {verifySubmitting ? "Sending…" : "Submit Code"}
+                  </button>
+                </div>
+
+                {run.jobUrl && (
+                  <a
+                    href={run.jobUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 12px",
+                      background: "transparent",
+                      color: "#b45309",
+                      borderRadius: 7,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      textDecoration: "none",
+                      border: "1px solid #f59e0b",
+                    }}
+                  >
+                    Open Application URL →
+                  </a>
+                )}
+              </div>
+            )}
 
             {/* Awaiting Review action panel */}
             {status === "REVIEW" && !decisionBanner && (

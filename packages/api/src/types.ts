@@ -133,6 +133,71 @@ export type AcceleratorListResponse = ApiResponse<
   Array<{ atsType: AtsType; version: number; successRate: number | null }>
 >;
 
+// --- KPI ---
+
+export type KpiPeriod = "24h" | "7d" | "30d";
+
+/** A single computed KPI value with period-over-period comparison. */
+export interface KpiValue {
+  current: number;
+  previous: number;
+  /** Percentage change relative to the previous period (+ve = increase). */
+  delta?: number;
+  /** Pre-formatted display string (e.g. "84.2%", "$4.82", "3.2 min"). */
+  formatted: string;
+}
+
+/**
+ * Full KPI snapshot for one observation period.
+ * Shape is intentionally identical to KpiSnapshot in packages/console/src/types.ts
+ * so the console can deserialise the API response directly.
+ */
+export interface KpiSnapshot {
+  period: KpiPeriod;
+  generatedAt: string;
+  successRate: KpiValue;
+  hitlRate: KpiValue;
+  llmCostUsd: KpiValue;
+  deterministicRate: KpiValue;
+  totalRuns: KpiValue;
+  submittedRuns: KpiValue;
+  failedRuns: KpiValue;
+  verificationRequiredRuns: KpiValue;
+  avgRunDurationSec: KpiValue;
+  reviewPendingCount: number;
+}
+
+export type KpiResponse = ApiResponse<KpiSnapshot>;
+
+// --- Verification Required ---
+
+/**
+ * A run that submitted successfully but is gated behind an email
+ * verification code.  Surfaced so an operator can identify and
+ * manually complete the code-entry step.
+ */
+export interface VerificationQueueItem {
+  runId: string;
+  jobId: string;
+  candidateId: string;
+  company: string;
+  jobTitle: string;
+  jobUrl: string;
+  completedAt: string;
+  /** URL of the post-submit screenshot showing the security-code form. */
+  postSubmitScreenshotUrl?: string;
+}
+
+export type VerificationQueueResponse = ApiResponse<VerificationQueueItem[]>;
+
+/**
+ * Request body for POST /api/runs/:id/verification-code.
+ * Operator supplies the security code that Greenhouse emailed to the candidate.
+ */
+export interface VerificationCodeBody {
+  code: string;
+}
+
 // --- Review ---
 
 export interface ReviewQueueQuery {

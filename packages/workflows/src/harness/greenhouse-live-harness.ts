@@ -76,7 +76,11 @@ import { resolve } from "node:path";
 import { BrowserBroker, RuntimeProvider } from "@dejsol/browser-broker";
 import type { SessionRequirements, AllocatedSession } from "@dejsol/browser-broker";
 import { LocalFileArtifactStore } from "@dejsol/browser-worker";
-import { executeGreenhouseHappyPath } from "../activities/greenhouse-browser-activity.js";
+import { createAnswerGenerator, createClaudeProvider } from "@dejsol/intelligence";
+import {
+  executeGreenhouseHappyPath,
+  enterVerificationCode,
+} from "../activities/greenhouse-browser-activity.js";
 
 // ---------------------------------------------------------------------------
 // Configuration types
@@ -93,6 +97,27 @@ export interface HarnessConfig {
     lastName: string;
     email: string;
     phone?: string;
+    country?: string;
+    location?: string;
+    linkedin?: string;
+    requireSponsorship?: string;
+    authorizedToWork?: string;
+    previouslyWorkedAsRole?: string;
+    experienceDuration?: string;
+    industry?: string;
+    analyticsScope?: string;
+    pythonExperience?: string;
+    hasPortfolio?: string;
+    workedHereBefore?: string;
+    salaryRange?: string;
+    state?: string;
+    industryExperience?: string;
+    gender?: string;
+    raceEthnicity?: string;
+    veteranStatus?: string;
+    disabilityStatus?: string;
+    hispanicLatino?: string;
+    whyCompany?: string;
   };
   /** Browser provider to use for session allocation. */
   provider: RuntimeProvider;
@@ -102,6 +127,14 @@ export interface HarnessConfig {
   artifactDir: string;
   /** Run identifier for trace correlation. */
   runId: string;
+  /** Playwright slowMo in ms — adds delay to every browser action. 0 = off. */
+  slowMo: number;
+  /** Milliseconds to pause before clicking the submit button. */
+  preSubmitDwellMs: number;
+  /** Maximum run duration in ms before the harness aborts. Default 5 minutes. */
+  maxRunMs: number;
+  /** Milliseconds to wait for operator to enter a verification code. Default 15 minutes. */
+  verificationCodeTimeoutMs: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +200,27 @@ export function loadHarnessConfig(): HarnessConfig | null {
       lastName: lastName!,
       email: email!,
       phone: process.env["GREENHOUSE_PHONE"]?.trim() || undefined,
+      country: process.env["GREENHOUSE_COUNTRY"]?.trim() || "United States",
+      location: process.env["GREENHOUSE_LOCATION"]?.trim() || "Arlington",
+      linkedin: process.env["GREENHOUSE_LINKEDIN"]?.trim() || "N/A",
+      requireSponsorship: "No",
+      authorizedToWork: "Yes",
+      previouslyWorkedAsRole: "Yes",
+      experienceDuration: "5+ years",
+      industry: "SaaS / Software",
+      analyticsScope: "Defining KPIs and building analytics frameworks",
+      pythonExperience: "I use Python or R regularly for data analysis",
+      hasPortfolio: "Yes",
+      workedHereBefore: "No",
+      salaryRange: "$120,000 - $140,000",
+      state: process.env["GREENHOUSE_STATE"]?.trim() || "Texas",
+      industryExperience: "Yes, 8 years in SaaS and fintech.",
+      gender: "Cisgender man",
+      raceEthnicity: "South Asian",
+      veteranStatus: "I have never served in the military",
+      disabilityStatus: "No, I do not have a disability and have not had one in the past",
+      hispanicLatino: "No",
+      whyCompany: process.env["GREENHOUSE_WHY_COMPANY"]?.trim() || undefined,
     },
     provider,
     headless: process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false",
@@ -174,6 +228,12 @@ export function loadHarnessConfig(): HarnessConfig | null {
       process.env["GREENHOUSE_ARTIFACT_DIR"]?.trim() || "./artifacts-live",
     ),
     runId: process.env["GREENHOUSE_RUN_ID"]?.trim() || randomUUID(),
+    slowMo: parseInt(process.env["BROWSER_SLOW_MO_MS"] ?? "100", 10),
+    preSubmitDwellMs: parseInt(process.env["PRE_SUBMIT_DWELL_MS"] ?? "2000", 10),
+    maxRunMs: parseInt(process.env["MAX_RUN_MS"] ?? "300000", 10),
+    verificationCodeTimeoutMs: parseInt(
+      process.env["VERIFICATION_CODE_TIMEOUT_MS"] ?? "900000", 10, // 15 minutes default
+    ),
   };
 }
 
@@ -235,24 +295,42 @@ export async function runGreenhouseApplication(
     headless,
     artifactDir,
     runId,
+    slowMo: 0,
+    preSubmitDwellMs: 0,
+    maxRunMs: 300_000,
+    verificationCodeTimeoutMs: 0,
   };
 
   const broker = new BrowserBroker();
-  const requirements: SessionRequirements = { provider, headless };
+  const requirements: SessionRequirements = { provider, headless, slowMo: 0 };
   let session: AllocatedSession | undefined;
 
   try {
     session = await broker.allocateSession(requirements);
     const store = new LocalFileArtifactStore(artifactDir);
 
+    const candidateBag: Record<string, string> = {
+      firstName: config.candidate.firstName,
+      lastName: config.candidate.lastName,
+      email: config.candidate.email,
+    };
+    for (const [k, v] of Object.entries(config.candidate)) {
+      if (v && !candidateBag[k]) candidateBag[k] = v;
+    }
+
+    const urlCompany = input.jobUrl.match(/greenhouse\.io\/([^/]+)/)?.[1] ?? undefined;
+
+    const anthropicKey = process.env["ANTHROPIC_API_KEY"]?.trim();
+    const answerGenerator = anthropicKey
+      ? createAnswerGenerator(createClaudeProvider(anthropicKey))
+      : createAnswerGenerator();
+
     const data: Record<string, unknown> = {
       resumeFile: config.resumePath,
-      candidate: {
-        firstName: config.candidate.firstName,
-        lastName: config.candidate.lastName,
-        email: config.candidate.email,
-        ...(config.candidate.phone ? { phone: config.candidate.phone } : {}),
-      },
+      candidate: candidateBag,
+      answerGenerator,
+      company: urlCompany,
+      jobTitle: undefined,
     };
 
     const result = await executeGreenhouseHappyPath({
@@ -318,18 +396,26 @@ export async function runGreenhouseApplication(
  * Returns true on success, false on failure.
  */
 export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
-  const { targetUrl, resumePath, candidate, provider, headless, artifactDir, runId } = config;
+  const {
+    targetUrl, resumePath, candidate, provider, headless,
+    artifactDir, runId, slowMo, preSubmitDwellMs, maxRunMs,
+    verificationCodeTimeoutMs,
+  } = config;
 
   console.log("\n[greenhouse-live] ─────────────────────────────────");
   console.log(`[greenhouse-live] Run ID    : ${runId}`);
   console.log(`[greenhouse-live] Target URL: ${targetUrl}`);
   console.log(`[greenhouse-live] Provider  : ${provider}`);
   console.log(`[greenhouse-live] Headless  : ${headless}`);
+  console.log(`[greenhouse-live] Slow-mo   : ${slowMo}ms`);
+  console.log(`[greenhouse-live] Pre-submit: ${preSubmitDwellMs}ms`);
+  console.log(`[greenhouse-live] Max run   : ${(maxRunMs / 1000).toFixed(0)}s`);
+  console.log(`[greenhouse-live] Code wait : ${(verificationCodeTimeoutMs / 60_000).toFixed(0)}m`);
   console.log(`[greenhouse-live] Artifact  : ${artifactDir}/${runId}/`);
   console.log("[greenhouse-live] ─────────────────────────────────\n");
 
   const broker = new BrowserBroker();
-  const requirements: SessionRequirements = { provider, headless };
+  const requirements: SessionRequirements = { provider, headless, slowMo };
   let session: AllocatedSession | undefined;
 
   try {
@@ -339,20 +425,44 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
 
     const store = new LocalFileArtifactStore(artifactDir);
 
+    const candidateBag: Record<string, string> = {
+      firstName: candidate.firstName,
+      lastName: candidate.lastName,
+      email: candidate.email,
+    };
+    for (const [k, v] of Object.entries(candidate)) {
+      if (v && !candidateBag[k]) candidateBag[k] = v;
+    }
+
+    // Extract company name from URL for job context (e.g. "nmi" from
+    // "job-boards.greenhouse.io/nmi/jobs/123")
+    const urlCompany = targetUrl.match(/greenhouse\.io\/([^/]+)/)?.[1] ?? undefined;
+
+    // Create answer generator with Claude fallback if API key is present
+    const anthropicKey = process.env["ANTHROPIC_API_KEY"]?.trim();
+    const answerGenerator = anthropicKey
+      ? createAnswerGenerator(createClaudeProvider(anthropicKey))
+      : createAnswerGenerator(); // deterministic-only, no model
+
+    if (anthropicKey) {
+      console.log("[greenhouse-live] LLM fallback : enabled (Claude)");
+    } else {
+      console.log("[greenhouse-live] LLM fallback : disabled (no ANTHROPIC_API_KEY)");
+    }
+
     const data: Record<string, unknown> = {
       resumeFile: resumePath,
-      candidate: {
-        firstName: candidate.firstName,
-        lastName: candidate.lastName,
-        email: candidate.email,
-        ...(candidate.phone ? { phone: candidate.phone } : {}),
-      },
+      candidate: candidateBag,
+      preSubmitDwellMs,
+      answerGenerator,
+      company: urlCompany,
+      jobTitle: undefined,
     };
 
     console.log("[greenhouse-live] Starting state-machine execution…\n");
     const start = Date.now();
 
-    const result = await executeGreenhouseHappyPath({
+    const runPromise = executeGreenhouseHappyPath({
       page: session.page,
       store,
       runId,
@@ -362,12 +472,27 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
       data,
     });
 
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Run exceeded ${(maxRunMs / 1000).toFixed(0)}s timeout`)), maxRunMs),
+    );
+
+    const result = await Promise.race([runPromise, timeoutPromise]);
+
     const durationMs = Date.now() - start;
 
     // ── Print result ──────────────────────────────────────────────────────
 
+    const verificationRequired = Boolean(result.data?.verificationRequired);
+    const displayOutcome = verificationRequired
+      ? "VERIFICATION_REQUIRED"
+      : result.outcome.toUpperCase();
+
     console.log("\n[greenhouse-live] ─────────────────────────────────");
-    console.log(`[greenhouse-live] Outcome       : ${result.outcome.toUpperCase()}`);
+    console.log(`[greenhouse-live] Outcome       : ${displayOutcome}`);
+    if (verificationRequired) {
+      console.log("[greenhouse-live] ⚠️  Greenhouse sent a verification code to your email.");
+      console.log("[greenhouse-live]    The application is submitted — enter the code to finalize.");
+    }
     console.log(`[greenhouse-live] Final state   : ${result.finalState}`);
     console.log(`[greenhouse-live] States done   : ${result.statesCompleted.length} / 12`);
     console.log(`[greenhouse-live] Duration      : ${(durationMs / 1000).toFixed(1)}s`);
@@ -397,7 +522,35 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
 
     console.log("[greenhouse-live] ─────────────────────────────────\n");
 
-    return result.outcome === "success";
+    // ── Verification code entry (live session is still open) ──────────────
+    // The browser session is still active here.  If Greenhouse showed the
+    // verification challenge, prompt the operator for the code NOW — before
+    // the session is released — so we can enter it in the same page context.
+    if (verificationRequired && session?.page) {
+      const waitMin = (verificationCodeTimeoutMs / 60_000).toFixed(0);
+      console.log("[greenhouse-live] 🔑 Verification code required.");
+      console.log("[greenhouse-live]    Check your email inbox for the code.");
+      console.log(`[greenhouse-live]    Waiting up to ${waitMin} minute(s) for code entry.`);
+      const code = await promptForVerificationCode(verificationCodeTimeoutMs);
+      if (code) {
+        console.log("[greenhouse-live] Entering verification code…");
+        const verifyResult = await enterVerificationCode(session.page, code);
+        if (verifyResult.success) {
+          console.log("[greenhouse-live] ✓ Code accepted — application submitted!");
+        } else {
+          console.log(
+            `[greenhouse-live] ✗ Code entry: ${verifyResult.outcome}` +
+            (verifyResult.error ? ` (${verifyResult.error})` : ""),
+          );
+          console.log("[greenhouse-live]   Complete entry manually via the job URL.");
+        }
+      } else {
+        console.log("[greenhouse-live] No code entered — complete manually via the job URL.");
+      }
+    }
+
+    // VERIFICATION_REQUIRED is a success — the form was submitted.
+    return result.outcome === "success" || verificationRequired;
   } finally {
     if (session) {
       try {
@@ -408,6 +561,40 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Stdin prompt for verification code
+// ---------------------------------------------------------------------------
+
+/**
+ * Prompt the operator for the Greenhouse security code via stdin.
+ * Returns the trimmed code, or null if the operator skips or times out (5 min).
+ */
+async function promptForVerificationCode(
+  timeoutMs: number,
+): Promise<string | null> {
+  const { createInterface } = await import("node:readline");
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+    const timeout = setTimeout(() => {
+      rl.close();
+      const minutes = (timeoutMs / 60_000).toFixed(0);
+      console.log(`\n[greenhouse-live] Code entry timed out (${minutes} minutes).`);
+      resolve(null);
+    }, timeoutMs);
+
+    rl.question(
+      "[greenhouse-live] Enter verification code (or press Enter to skip): ",
+      (input) => {
+        clearTimeout(timeout);
+        rl.close();
+        const trimmed = input.trim().replace(/\s/g, "");
+        resolve(trimmed.length > 0 ? trimmed : null);
+      },
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -7,9 +7,14 @@ import type {
   ApiResponse,
   RunListResponse,
   RunStatusResponse,
+  VerificationQueueResponse,
+  VerificationCodeBody,
 } from "../types.js";
 import type { ApplyRun } from "@dejsol/core";
 import type { TemporalClientWrapper } from "../temporal-client.js";
+import type { PrismaClient } from "@prisma/client";
+import { queryVerificationRuns, computeKpiSnapshot } from "../persistence.js";
+import type { KpiResponse } from "../types.js";
 
 export const runsRouter = Router();
 
@@ -100,6 +105,92 @@ runsRouter.post("/", async (req, res, next) => {
         : "Run started successfully",
     };
     res.status(201).json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/runs/kpi?period=24h|7d|30d — Compute dashboard KPI snapshot.
+ *
+ * IMPORTANT: registered before /:id so the static path segment takes priority.
+ *
+ * Aggregates apply_runs for the requested period plus the prior period
+ * (for delta computation), returning a KpiSnapshot ready for the dashboard.
+ * Falls back to an empty zero-value snapshot when the DB client is not wired.
+ */
+runsRouter.get("/kpi", async (req, res, next) => {
+  try {
+    const rawPeriod = (req.query["period"] as string | undefined) ?? "7d";
+    if (rawPeriod !== "24h" && rawPeriod !== "7d" && rawPeriod !== "30d") {
+      throw ApiError.badRequest(
+        `Invalid period "${rawPeriod}". Must be one of: 24h, 7d, 30d.`,
+      );
+    }
+    const period = rawPeriod;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    if (prismaClient) {
+      const snapshot = await computeKpiSnapshot(prismaClient, period);
+      const response: KpiResponse = { success: true, data: snapshot };
+      return res.json(response);
+    }
+
+    // No DB client — return a zero-value snapshot so the dashboard degrades
+    // gracefully without crashing (matches the mock shape exactly).
+    const zero = { current: 0, previous: 0, formatted: "0" };
+    const emptySnapshot: import("../types.js").KpiSnapshot = {
+      period: period as import("../types.js").KpiPeriod,
+      generatedAt: new Date().toISOString(),
+      successRate: { ...zero, formatted: "0.0%" },
+      hitlRate: { ...zero, formatted: "0.0%" },
+      llmCostUsd: { ...zero, formatted: "$0.00" },
+      deterministicRate: { ...zero, formatted: "0.0%" },
+      totalRuns: zero,
+      submittedRuns: zero,
+      failedRuns: zero,
+      verificationRequiredRuns: zero,
+      avgRunDurationSec: { ...zero, formatted: "0s" },
+      reviewPendingCount: 0,
+    };
+    const response: KpiResponse = { success: true, data: emptySnapshot };
+    res.json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/runs/verification-required — List runs awaiting email verification.
+ *
+ * IMPORTANT: This route must be registered before GET /api/runs/:id so Express
+ * matches the static path segment first and does not interpret
+ * "verification-required" as a run ID.
+ *
+ * Returns apply_runs with outcome = VERIFICATION_REQUIRED joined with their
+ * job_opportunities record, newest-first.  Falls back to an empty list when
+ * the PrismaClient is not injected (e.g. test environments without a DB).
+ */
+runsRouter.get("/verification-required", async (req, res, next) => {
+  try {
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    if (prismaClient) {
+      const items = await queryVerificationRuns(prismaClient);
+      const response: VerificationQueueResponse = {
+        success: true,
+        data: items,
+      };
+      return res.json(response);
+    }
+
+    // No DB client — return empty list (test / cold-start path)
+    const response: VerificationQueueResponse = {
+      success: true,
+      data: [],
+      message: "DB not connected — no verification-required runs available.",
+    };
+    res.json(response);
   } catch (err) {
     next(err);
   }
@@ -210,3 +301,52 @@ runsRouter.get("/:id/status", async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * POST /api/runs/:id/verification-code — Submit the Greenhouse security code.
+ *
+ * Accepts the 8-character verification code that Greenhouse emailed to the
+ * candidate.  When a Temporal client is wired, sends verificationCodeSignal
+ * to the workflow, which then enters "awaiting_verification" phase and calls
+ * enterVerificationCodeActivity to complete the submission.
+ *
+ * Without Temporal (dev / standalone), acknowledges receipt so the operator
+ * can use the code manually via the job application URL.
+ */
+runsRouter.post("/:id/verification-code", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const body = req.body as Partial<VerificationCodeBody>;
+
+    const rawCode = (body.code ?? "").toString().trim().replace(/\s/g, "");
+    if (!rawCode || rawCode.length < 4) {
+      throw ApiError.badRequest(
+        "code is required and must be at least 4 alphanumeric characters",
+      );
+    }
+    const code = rawCode.slice(0, 10); // truncate to max 10 chars for safety
+
+    const temporalClient = req.app.locals.temporalClient as TemporalClientWrapper | undefined;
+
+    if (temporalClient) {
+      await temporalClient.signalVerificationCode(id, code);
+      const response: ApiResponse<{ runId: string; signalSent: boolean }> = {
+        success: true,
+        data: { runId: id, signalSent: true },
+        message: "Verification code sent to workflow — submission in progress.",
+      };
+      return res.json(response);
+    }
+
+    // No Temporal client — acknowledge receipt, operator completes manually.
+    const response: ApiResponse<{ runId: string; signalSent: boolean }> = {
+      success: true,
+      data: { runId: id, signalSent: false },
+      message: "Code received. Open the job application URL and enter it manually.",
+    };
+    res.json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+

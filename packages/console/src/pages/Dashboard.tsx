@@ -226,6 +226,8 @@ function RecentRunsTable({ runs }: { runs: RunSummary[] }) {
                             ? "#ef4444"
                             : run.outcome === "SUBMITTED"
                             ? "#22c55e"
+                            : run.outcome === "VERIFICATION_REQUIRED"
+                            ? "#f59e0b"
                             : "#3b82f6",
                         borderRadius: 99,
                       }}
@@ -500,6 +502,12 @@ export function Dashboard() {
                     color: "#16a34a",
                   },
                   {
+                    label: "Verify Email",
+                    count: kpi.verificationRequiredRuns.current,
+                    total: kpi.totalRuns.current,
+                    color: "#b45309",
+                  },
+                  {
                     label: "Failed",
                     count: kpi.failedRuns.current,
                     total: kpi.totalRuns.current,
@@ -510,6 +518,7 @@ export function Dashboard() {
                     count:
                       kpi.totalRuns.current -
                       kpi.submittedRuns.current -
+                      kpi.verificationRequiredRuns.current -
                       kpi.failedRuns.current,
                     total: kpi.totalRuns.current,
                     color: "#7c3aed",
@@ -567,6 +576,8 @@ export function Dashboard() {
                         {kpi[
                           label === "Submitted"
                             ? "submittedRuns"
+                            : label === "Verify Email"
+                            ? "verificationRequiredRuns"
                             : label === "Failed"
                             ? "failedRuns"
                             : "totalRuns"
@@ -576,6 +587,8 @@ export function Dashboard() {
                               delta={
                                 (label === "Submitted"
                                   ? kpi.submittedRuns
+                                  : label === "Verify Email"
+                                  ? kpi.verificationRequiredRuns
                                   : kpi.failedRuns
                                 ).delta!
                               }

@@ -14,8 +14,9 @@ import {
 import {
   reviewApprovalSignal,
   cancelRequestSignal,
+  verificationCodeSignal,
 } from "./signals.js";
-import type { ReviewApprovalPayload, CancelRequestPayload } from "./signals.js";
+import type { ReviewApprovalPayload, CancelRequestPayload, VerificationCodePayload } from "./signals.js";
 
 import {
   currentStateQuery,
@@ -29,7 +30,11 @@ import type {
   WorkflowErrorEntry,
 } from "./queries.js";
 
-import type { BrowserActivityResult, GreenhouseHappyPathResult } from "./activities/index.js";
+import type {
+  BrowserActivityResult,
+  GreenhouseHappyPathResult,
+  EnterVerificationCodeInput,
+} from "./activities/index.js";
 import type * as activities from "./activities/index.js";
 
 const TOTAL_STATES = 14;
@@ -86,10 +91,11 @@ export async function applyWorkflow(
 
   // Proxy Greenhouse happy-path activity with a longer timeout — it runs
   // the full browser session (12 states) in a single Temporal activity.
-  const { runGreenhouseHappyPathActivity } = proxyActivities<typeof activities>({
-    startToCloseTimeout: "10m",
-    retry: { maximumAttempts: 2 },
-  });
+  const { runGreenhouseHappyPathActivity, enterVerificationCodeActivity } =
+    proxyActivities<typeof activities>({
+      startToCloseTimeout: "10m",
+      retry: { maximumAttempts: 2 },
+    });
 
   // --- Mutable workflow state ---
   let currentState: StateName | null = null;
@@ -99,6 +105,7 @@ export async function applyWorkflow(
   let data: Record<string, unknown> = {};
   let reviewResult: ReviewApprovalPayload | undefined;
   let cancelRequested: CancelRequestPayload | undefined;
+  let verificationCodePayload: VerificationCodePayload | undefined;
 
   // Accumulates all ArtifactReferences returned by activity results.
   const bundle = emptyBundle();
@@ -109,6 +116,9 @@ export async function applyWorkflow(
   });
   setHandler(cancelRequestSignal, (payload: CancelRequestPayload) => {
     cancelRequested = payload;
+  });
+  setHandler(verificationCodeSignal, (payload: VerificationCodePayload) => {
+    verificationCodePayload = payload;
   });
 
   // --- Register query handlers ---
@@ -200,6 +210,57 @@ export async function applyWorkflow(
     if (ghResult.outcome === "failure") {
       phase = "failed";
       return buildResult(RunOutcome.FAILED, ghResult.finalState, statesCompleted, errors, bundle);
+    }
+
+    // Greenhouse verification challenge: the form was submitted but Greenhouse
+    // gated the completion behind an email code.  Wait for the operator to
+    // supply the code via the verificationCodeSignal (24h timeout).
+    if (ghResult.data.verificationRequired === true) {
+      phase = "awaiting_verification";
+
+      const verificationTimedOut = !(await condition(
+        () => verificationCodePayload !== undefined || cancelRequested !== undefined,
+        "24h",
+      ));
+
+      if (cancelRequested) {
+        phase = "cancelled";
+        return buildResult(RunOutcome.CANCELLED, ghResult.finalState, statesCompleted, errors, bundle);
+      }
+
+      if (verificationTimedOut || !verificationCodePayload?.code) {
+        // No code supplied in time — run stays VERIFICATION_REQUIRED.
+        phase = "completed";
+        return buildResult(RunOutcome.VERIFICATION_REQUIRED, ghResult.finalState, statesCompleted, errors, bundle);
+      }
+
+      // Attempt to enter the code in a new browser session (best-effort —
+      // Greenhouse session may have expired since original submission).
+      const verifyInput: EnterVerificationCodeInput = {
+        runId: input.runId,
+        jobUrl: input.jobUrl,
+        code: verificationCodePayload.code,
+      };
+      const verifyResult = await enterVerificationCodeActivity(verifyInput);
+
+      phase = "completed";
+      if (verifyResult.success) {
+        return buildResult(
+          RunOutcome.SUBMITTED,
+          ghResult.finalState,
+          statesCompleted,
+          errors,
+          bundle,
+          ghResult.confirmationId,
+        );
+      } else {
+        errors.push({
+          state: ghResult.finalState,
+          message: verifyResult.error ?? `Verification code entry ${verifyResult.outcome}`,
+          timestamp: new Date().toISOString(),
+        });
+        return buildResult(RunOutcome.VERIFICATION_REQUIRED, ghResult.finalState, statesCompleted, errors, bundle);
+      }
     }
 
     phase = "completed";

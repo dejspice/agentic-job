@@ -4,10 +4,11 @@ import type { CommandResult, SelectorTarget } from "@dejsol/core";
 async function resolveAndClick(
   page: Page,
   target: SelectorTarget,
+  force?: boolean,
 ): Promise<void> {
   switch (target.kind) {
     case "css":
-      await page.click(target.value);
+      await page.click(target.value, { force });
       break;
     case "coordinates":
       await page.mouse.click(target.x, target.y);
@@ -17,18 +18,18 @@ async function resolveAndClick(
         page.getByRole("link", { name: target.label }),
       ).or(
         page.getByText(target.label),
-      ).first().click();
+      ).first().click({ force });
       break;
   }
 }
 
 export async function executeClick(
   page: Page,
-  cmd: { target: SelectorTarget },
+  cmd: { target: SelectorTarget; force?: boolean },
 ): Promise<CommandResult> {
   const start = performance.now();
   try {
-    await resolveAndClick(page, cmd.target);
+    await resolveAndClick(page, cmd.target, cmd.force);
     return {
       success: true,
       durationMs: Math.round(performance.now() - start),

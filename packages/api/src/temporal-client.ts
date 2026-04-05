@@ -8,8 +8,9 @@ import type { ReviewDecisionBody } from "./types.js";
  * and packages/workflows/src/queries.ts.
  */
 export const SIGNAL_NAMES = {
-  REVIEW_APPROVAL: "reviewApproval",
-  CANCEL_REQUEST: "cancelRequest",
+  REVIEW_APPROVAL:   "reviewApproval",
+  CANCEL_REQUEST:    "cancelRequest",
+  VERIFICATION_CODE: "verificationCode",
 } as const;
 
 export const QUERY_NAMES = {
@@ -81,6 +82,15 @@ export class TemporalClientWrapper {
       edits: decision.edits,
       reviewerNote: decision.reviewerNote,
     });
+  }
+
+  /**
+   * Send the operator-supplied verification code to a VERIFICATION_REQUIRED workflow.
+   * The workflow must be in the "awaiting_verification" phase.
+   */
+  async signalVerificationCode(runId: string, code: string): Promise<void> {
+    const handle = this.getWorkflowHandle(runId);
+    await handle.signal(SIGNAL_NAMES.VERIFICATION_CODE, { code });
   }
 
   /**

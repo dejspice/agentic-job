@@ -93,13 +93,19 @@ describe("DETECT_APPLY_ENTRY — failure path artifact capture", () => {
 
   it("captures a screenshot when the click fails after element is found", async () => {
     const spy = makeArtifactSpy();
-    let callCount = 0;
+    let waitForCount = 0;
     const ctx = baseContext({
       captureArtifact: spy.captureArtifact,
       execute: async (cmd) => {
-        callCount++;
-        // WAIT_FOR succeeds, CLICK fails
-        if (cmd.type === "WAIT_FOR") return { success: true, durationMs: 0 };
+        if (cmd.type === "WAIT_FOR") {
+          waitForCount++;
+          // First WAIT_FOR = inline form check → fail (no inline form)
+          // Second WAIT_FOR = apply button check → succeed
+          return waitForCount === 1
+            ? { success: false, durationMs: 0 }
+            : { success: true, durationMs: 0 };
+        }
+        // CLICK fails
         return { success: false, durationMs: 0, error: "click failed" };
       },
     });
