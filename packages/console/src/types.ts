@@ -20,10 +20,11 @@ export const RunMode = {
 export type RunMode = (typeof RunMode)[keyof typeof RunMode];
 
 export const RunOutcome = {
-  SUBMITTED: "SUBMITTED",
-  FAILED:    "FAILED",
-  ESCALATED: "ESCALATED",
-  CANCELLED: "CANCELLED",
+  SUBMITTED:             "SUBMITTED",
+  VERIFICATION_REQUIRED: "VERIFICATION_REQUIRED",
+  FAILED:                "FAILED",
+  ESCALATED:             "ESCALATED",
+  CANCELLED:             "CANCELLED",
 } as const;
 export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
 
@@ -100,7 +101,7 @@ export interface KpiSnapshot {
   generatedAt: string;
 
   // ── Primary KPIs ──────────────────────────────────────────────────────
-  /** % of completed runs that ended as SUBMITTED. */
+  /** % of completed runs that ended as SUBMITTED or VERIFICATION_REQUIRED. */
   successRate: KpiValue;
   /** % of runs that required at least one human intervention (HITL). */
   hitlRate: KpiValue;
@@ -116,6 +117,8 @@ export interface KpiSnapshot {
   totalRuns: KpiValue;
   submittedRuns: KpiValue;
   failedRuns: KpiValue;
+  /** Runs that submitted but are gated behind an email verification challenge. */
+  verificationRequiredRuns: KpiValue;
   avgRunDurationSec: KpiValue;
 
   // ── Queue snapshot ────────────────────────────────────────────────────
@@ -230,6 +233,27 @@ export interface RunDetailView {
   completedAt: string | null;
   confirmationId: string | null;
   errors: RunErrorEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Verification required queue
+// ---------------------------------------------------------------------------
+
+/**
+ * A run that submitted successfully but is gated behind an email
+ * verification code challenge.  Operators must open the job URL and
+ * enter the code to finalize the application.
+ */
+export interface VerificationQueueItem {
+  runId: string;
+  jobId: string;
+  candidateId: string;
+  company: string;
+  jobTitle: string;
+  jobUrl: string;
+  completedAt: string;
+  /** URL of the post-submit screenshot showing the security-code form. */
+  postSubmitScreenshotUrl?: string;
 }
 
 // ---------------------------------------------------------------------------

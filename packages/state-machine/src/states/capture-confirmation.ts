@@ -1,8 +1,22 @@
 import { StateName } from "@dejsol/core";
 import type { StateHandler, StateContext, StateResult } from "../types.js";
 
-const CONFIRMATION_SELECTORS =
-  ".application-confirmation, #application_confirmation, .flash-success";
+/**
+ * Confirmation page selectors covering canonical Greenhouse classes and
+ * common alternate patterns seen on live boards.
+ */
+const CONFIRMATION_SELECTORS = [
+  ".application-confirmation",
+  "#application_confirmation",
+  ".flash-success",
+  ".confirmation-message",
+  ".success-message",
+  ".submitted-message",
+  ".application-success",
+  '[data-application-complete="true"]',
+  ".flash.notice",
+  ".notice.success",
+].join(", ");
 
 export const captureConfirmationState: StateHandler = {
   name: StateName.CAPTURE_CONFIRMATION,
@@ -35,17 +49,27 @@ export const captureConfirmationState: StateHandler = {
       selector: CONFIRMATION_SELECTORS,
     });
 
+    // READ_TEXT may fail on some boards (e.g. locator strict-mode if multiple
+    // confirmation selectors match the same element, or the text is in a
+    // canvas / non-text node).  The confirmation screenshot already serves as
+    // proof of submission — degrade gracefully rather than treating this as
+    // a failure.
     let confirmationText = "";
     if (readResult.success && readResult.data) {
-      confirmationText = (readResult.data as Record<string, unknown>).text as string ?? "";
+      confirmationText =
+        ((readResult.data as Record<string, unknown>).text as string) ?? "";
     }
 
-    context.data.confirmationText = confirmationText;
+    context.data.confirmationText =
+      confirmationText || "(confirmation screenshot captured)";
     context.data.runOutcome = "SUBMITTED";
 
     return {
       outcome: "success",
-      data: { confirmationText, runOutcome: "SUBMITTED" },
+      data: {
+        confirmationText: context.data.confirmationText as string,
+        runOutcome: "SUBMITTED",
+      },
     };
   },
 };

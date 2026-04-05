@@ -20,3 +20,9 @@ export {
   releaseBrowserbaseSession,
   browserbaseConnector,
 } from "./browserbase.js";
+
+export {
+  allocateLocalSession,
+  releaseLocalSession,
+  localConnector,
+} from "./local.js";

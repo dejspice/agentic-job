@@ -8,6 +8,7 @@ export interface ExtractedField {
   label: string | null;
   required: boolean;
   value: string | null;
+  maxLength: number | null;
 }
 
 export async function executeExtractFields(
@@ -23,29 +24,68 @@ export async function executeExtractFields(
         (globalThis as any).document.querySelectorAll("input, select, textarea"),
       );
 
-      return inputs.map((el: any) => {
-        const id = el.id ? `#${el.id}` : "";
-        const name = el.name ? `[name="${el.name}"]` : "";
-        const selector = id || name || el.tagName.toLowerCase();
+      return inputs
+        .filter((el: any) => {
+          // Skip hidden framework validation shims (e.g. React Select
+          // requiredInput elements) — they are aria-hidden, not interactive,
+          // and have no id/name.  Counting them as real fields causes false
+          // positives in the pre-submit required-field sweep.
+          if (el.getAttribute("aria-hidden") === "true") return false;
+          if (el.tabIndex === -1 && !el.id && !el.name) return false;
+          if (el.type === "hidden") return false;
+          return true;
+        })
+        .map((el: any) => {
+          let id = "";
+          if (el.id) {
+            // Numeric-only IDs are invalid CSS selectors (#1255 throws
+            // SyntaxError). Use attribute selector for those.
+            id = /^\d/.test(el.id) ? `[id="${el.id}"]` : `#${el.id}`;
+          }
+          const name = el.name ? `[name="${el.name}"]` : "";
+          const selector = id || name || el.tagName.toLowerCase();
 
-        let label: string | null = null;
-        if (el.id) {
-          const labelEl = (globalThis as any).document.querySelector(`label[for="${el.id}"]`);
-          if (labelEl) label = (labelEl.textContent ?? "").trim() || null;
-        }
-        if (!label && el.closest("label")) {
-          label = (el.closest("label").textContent ?? "").trim() || null;
-        }
+          let label: string | null = null;
+          if (el.id) {
+            const labelEl = (globalThis as any).document.querySelector(`label[for="${el.id}"]`);
+            if (labelEl) label = (labelEl.textContent ?? "").trim() || null;
+          }
+          if (!label && el.closest("label")) {
+            label = (el.closest("label").textContent ?? "").trim() || null;
+          }
 
-        return {
-          selector,
-          type: el.type || el.tagName.toLowerCase(),
-          name: el.name || null,
-          label,
-          required: Boolean(el.required),
-          value: el.value || null,
-        };
-      });
+          const role = el.getAttribute("role") || null;
+
+          // React Select combobox inputs always have empty .value even when
+          // an option is selected (React manages the state, not the DOM).
+          // Try to read the selected value from the .select__single-value
+          // sibling; fall back to the raw el.value.
+          let fieldValue = el.value || null;
+          if (role === "combobox" && !fieldValue) {
+            const container = el.closest(".select__input-container")
+              ?? el.closest("[class*='select']");
+            const singleValue = container
+              ?.parentElement?.querySelector(".select__single-value")
+              ?? container?.closest("[class*='container']")?.querySelector(".select__single-value");
+            if (singleValue) {
+              fieldValue = (singleValue.textContent ?? "").trim() || null;
+            }
+          }
+
+          const rawMax = el.getAttribute("maxlength");
+          const maxLength = rawMax ? parseInt(rawMax, 10) : null;
+
+          return {
+            selector,
+            type: el.type || el.tagName.toLowerCase(),
+            role,
+            name: el.name || null,
+            label,
+            required: Boolean(el.required) || el.getAttribute("aria-required") === "true",
+            value: fieldValue,
+            maxLength: maxLength && !isNaN(maxLength) ? maxLength : null,
+          };
+        });
     },
     );
 

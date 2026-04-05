@@ -299,9 +299,13 @@ describe("applyWorkflow — REVIEW_BEFORE_SUBMIT orchestration", () => {
       stubSubmit();
       stubCapture({ confirmationId: "CONF-AUTO-001" });
 
+      // Use LEVER (non-Greenhouse) so the generic orchestration path is
+      // exercised without needing a real browser session.  Greenhouse
+      // FULL_AUTO routing is covered by the greenhouse-execution integration test.
       const result = await applyWorkflow({
         ...BASE_INPUT,
         mode: RunMode.FULL_AUTO,
+        atsType: AtsType.LEVER,
       });
 
       assert.equal(result.outcome, RunOutcome.SUBMITTED);

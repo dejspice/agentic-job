@@ -513,8 +513,13 @@ describe("review-mode flow — vertical integration", () => {
     it("completes with SUBMITTED without any review signal", async () => {
       wireRealActivities();
 
+      // Use LEVER so the generic stub loop runs (no real browser needed).
+      // Greenhouse FULL_AUTO routing uses runGreenhouseHappyPathActivity which
+      // requires a real browser; that path is covered by the dedicated
+      // greenhouse-execution integration test.
       const result: ApplyWorkflowResult = await applyWorkflow({
         ...BASE_INPUT,
+        atsType: AtsType.LEVER,
         mode: RunMode.FULL_AUTO,
       });
 
@@ -530,6 +535,7 @@ describe("review-mode flow — vertical integration", () => {
 
       const result: ApplyWorkflowResult = await applyWorkflow({
         ...BASE_INPUT,
+        atsType: AtsType.LEVER,
         mode: RunMode.FULL_AUTO,
       });
 

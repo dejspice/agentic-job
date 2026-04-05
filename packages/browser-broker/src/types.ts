@@ -3,6 +3,8 @@ import type { Browser, BrowserContext, Page } from "playwright";
 export enum RuntimeProvider {
   BRIGHT_DATA = "bright_data",
   BROWSERBASE = "browserbase",
+  /** Local Chromium launch — no credentials required. For dev and harness runs. */
+  LOCAL = "local",
 }
 
 export interface SessionRequirements {
@@ -10,6 +12,19 @@ export interface SessionRequirements {
   geo?: string;
   timeoutMs?: number;
   tags?: Record<string, string>;
+  /**
+   * When true the browser window is visible.
+   * Only honoured by the LOCAL provider — remote providers are always headless.
+   * Useful for debugging live-target runs.
+   */
+  headless?: boolean;
+  /**
+   * Milliseconds to slow down every Playwright action (click, type, navigate, etc.).
+   * Adds a human-like cadence that reduces anti-bot / verification triggers on
+   * ATS platforms like Greenhouse.  0 = no slowdown (default for tests).
+   * Recommended: 80–150ms for live runs.
+   */
+  slowMo?: number;
 }
 
 export interface AllocatedSession {

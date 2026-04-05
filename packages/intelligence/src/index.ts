@@ -59,3 +59,5 @@ export {
   type PlannedStep,
   type PlannerService,
 } from "./planner.js";
+
+export { createClaudeProvider } from "./providers/claude.js";

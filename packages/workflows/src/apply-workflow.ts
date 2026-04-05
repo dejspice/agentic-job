@@ -3,8 +3,7 @@ import {
   setHandler,
   condition,
 } from "@temporalio/workflow";
-import { StateName, RunMode, RunOutcome, TERMINAL_STATES } from "@dejsol/core";
-import type { AtsType } from "@dejsol/core";
+import { StateName, RunMode, RunOutcome, AtsType, TERMINAL_STATES } from "@dejsol/core";
 
 import {
   emptyBundle,
@@ -15,8 +14,9 @@ import {
 import {
   reviewApprovalSignal,
   cancelRequestSignal,
+  verificationCodeSignal,
 } from "./signals.js";
-import type { ReviewApprovalPayload, CancelRequestPayload } from "./signals.js";
+import type { ReviewApprovalPayload, CancelRequestPayload, VerificationCodePayload } from "./signals.js";
 
 import {
   currentStateQuery,
@@ -30,7 +30,11 @@ import type {
   WorkflowErrorEntry,
 } from "./queries.js";
 
-import type { BrowserActivityResult } from "./activities/index.js";
+import type {
+  BrowserActivityResult,
+  GreenhouseHappyPathResult,
+  EnterVerificationCodeInput,
+} from "./activities/index.js";
 import type * as activities from "./activities/index.js";
 
 const TOTAL_STATES = 14;
@@ -74,7 +78,7 @@ export interface ApplyWorkflowResult {
 export async function applyWorkflow(
   input: ApplyWorkflowInput,
 ): Promise<ApplyWorkflowResult> {
-  // Proxy all four activity groups with appropriate timeouts
+  // Proxy standard activities (per-state, short-lived).
   const {
     initActivity,
     browserActivity,
@@ -85,6 +89,14 @@ export async function applyWorkflow(
     retry: { maximumAttempts: 3 },
   });
 
+  // Proxy Greenhouse happy-path activity with a longer timeout — it runs
+  // the full browser session (12 states) in a single Temporal activity.
+  const { runGreenhouseHappyPathActivity, enterVerificationCodeActivity } =
+    proxyActivities<typeof activities>({
+      startToCloseTimeout: "10m",
+      retry: { maximumAttempts: 2 },
+    });
+
   // --- Mutable workflow state ---
   let currentState: StateName | null = null;
   let phase: WorkflowPhase = "initializing";
@@ -93,6 +105,7 @@ export async function applyWorkflow(
   let data: Record<string, unknown> = {};
   let reviewResult: ReviewApprovalPayload | undefined;
   let cancelRequested: CancelRequestPayload | undefined;
+  let verificationCodePayload: VerificationCodePayload | undefined;
 
   // Accumulates all ArtifactReferences returned by activity results.
   const bundle = emptyBundle();
@@ -103,6 +116,9 @@ export async function applyWorkflow(
   });
   setHandler(cancelRequestSignal, (payload: CancelRequestPayload) => {
     cancelRequested = payload;
+  });
+  setHandler(verificationCodeSignal, (payload: VerificationCodePayload) => {
+    verificationCodePayload = payload;
   });
 
   // --- Register query handlers ---
@@ -147,6 +163,116 @@ export async function applyWorkflow(
   data = { ...data, ...initResult.data };
   currentState = initResult.nextState;
   phase = "running";
+
+  // --- Greenhouse FULL_AUTO fast-path ---
+  // Execute the entire Greenhouse application in one browser activity rather
+  // than the generic per-state loop.  Session continuity (a live Playwright
+  // page shared across all 12 states) is the reason this must be a single
+  // activity call — Temporal cannot preserve a Playwright Page across
+  // activity boundaries.
+  //
+  // REVIEW_BEFORE_SUBMIT and HUMAN_TAKEOVER fall through to the generic loop
+  // because (a) review mode is out of scope for the current happy path, and
+  // (b) human takeover does not run automation at all.
+  if (input.atsType === AtsType.GREENHOUSE && input.mode === RunMode.FULL_AUTO) {
+    const ghResult: GreenhouseHappyPathResult = await runGreenhouseHappyPathActivity({
+      runId: input.runId,
+      jobId: input.jobId,
+      candidateId: input.candidateId,
+      jobUrl: input.jobUrl,
+      data,
+    });
+
+    // Accumulate completed states.
+    for (const s of ghResult.statesCompleted) {
+      statesCompleted.push(s);
+    }
+
+    // Rebuild the byState index from each artifact's own state field.
+    // The store tags every artifact with its originating StateName.
+    for (const ref of ghResult.artifacts) {
+      mergeArtifacts(bundle, [ref], ref.state);
+    }
+
+    if (ghResult.error) {
+      errors.push({
+        state: ghResult.finalState,
+        message: ghResult.error,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (ghResult.outcome === "escalated") {
+      phase = "escalated";
+      return buildResult(RunOutcome.ESCALATED, ghResult.finalState, statesCompleted, errors, bundle);
+    }
+
+    if (ghResult.outcome === "failure") {
+      phase = "failed";
+      return buildResult(RunOutcome.FAILED, ghResult.finalState, statesCompleted, errors, bundle);
+    }
+
+    // Greenhouse verification challenge: the form was submitted but Greenhouse
+    // gated the completion behind an email code.  Wait for the operator to
+    // supply the code via the verificationCodeSignal (24h timeout).
+    if (ghResult.data.verificationRequired === true) {
+      phase = "awaiting_verification";
+
+      const verificationTimedOut = !(await condition(
+        () => verificationCodePayload !== undefined || cancelRequested !== undefined,
+        "24h",
+      ));
+
+      if (cancelRequested) {
+        phase = "cancelled";
+        return buildResult(RunOutcome.CANCELLED, ghResult.finalState, statesCompleted, errors, bundle);
+      }
+
+      if (verificationTimedOut || !verificationCodePayload?.code) {
+        // No code supplied in time — run stays VERIFICATION_REQUIRED.
+        phase = "completed";
+        return buildResult(RunOutcome.VERIFICATION_REQUIRED, ghResult.finalState, statesCompleted, errors, bundle);
+      }
+
+      // Attempt to enter the code in a new browser session (best-effort —
+      // Greenhouse session may have expired since original submission).
+      const verifyInput: EnterVerificationCodeInput = {
+        runId: input.runId,
+        jobUrl: input.jobUrl,
+        code: verificationCodePayload.code,
+      };
+      const verifyResult = await enterVerificationCodeActivity(verifyInput);
+
+      phase = "completed";
+      if (verifyResult.success) {
+        return buildResult(
+          RunOutcome.SUBMITTED,
+          ghResult.finalState,
+          statesCompleted,
+          errors,
+          bundle,
+          ghResult.confirmationId,
+        );
+      } else {
+        errors.push({
+          state: ghResult.finalState,
+          message: verifyResult.error ?? `Verification code entry ${verifyResult.outcome}`,
+          timestamp: new Date().toISOString(),
+        });
+        return buildResult(RunOutcome.VERIFICATION_REQUIRED, ghResult.finalState, statesCompleted, errors, bundle);
+      }
+    }
+
+    phase = "completed";
+    return buildResult(
+      RunOutcome.SUBMITTED,
+      ghResult.finalState,
+      statesCompleted,
+      errors,
+      bundle,
+      ghResult.confirmationId,
+    );
+  }
 
   // --- Phase 2: State-machine-driven execution loop ---
   // Runs from OPEN_JOB_PAGE through PRE_SUBMIT_CHECK.

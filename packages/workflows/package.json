@@ -10,13 +10,19 @@
     "clean": "rm -rf dist",
     "test": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/apply-workflow.test.ts",
     "test:integration": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/integration/review-flow.integration.test.ts",
+    "test:greenhouse": "node --require tsx/cjs --test src/__tests__/integration/greenhouse-execution.integration.test.ts",
+    "test:harness": "node --require tsx/cjs --test src/__tests__/harness/greenhouse-live-skip.test.ts",
     "test:all": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/apply-workflow.test.ts src/__tests__/integration/review-flow.integration.test.ts",
-    "typecheck:test": "tsc --project tsconfig.test.json"
+    "typecheck:test": "tsc --project tsconfig.test.json",
+    "harness:greenhouse-live": "node --require tsx/cjs src/harness/greenhouse-live-harness.ts"
   },
   "dependencies": {
+    "@dejsol/browser-worker": "*",
     "@dejsol/core": "*",
+    "@dejsol/intelligence": "*",
     "@dejsol/state-machine": "*",
     "@temporalio/activity": "^1.15.0",
-    "@temporalio/workflow": "^1.15.0"
+    "@temporalio/workflow": "^1.15.0",
+    "playwright": "^1.49.0"
   }
 }

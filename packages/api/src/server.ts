@@ -9,6 +9,7 @@ import { driveSyncRouter } from "./routes/drive-sync.js";
 import { acceleratorsRouter } from "./routes/accelerators.js";
 import { reviewRouter } from "./routes/review.js";
 import type { TemporalClientWrapper, TemporalConfig } from "./temporal-client.js";
+import type { PrismaClient } from "@prisma/client";
 
 const DEFAULT_PORT = 4000;
 
@@ -19,16 +20,23 @@ export interface ServerConfig {
   temporalClient?: TemporalClientWrapper;
   /** Temporal connection config. Used to create a client during startServer if temporalClient is not provided. */
   temporal?: TemporalConfig;
+  /**
+   * Pre-configured PrismaClient.  When provided, routes use this instance
+   * instead of the module-level singleton.  Inject a mock in tests to avoid
+   * real database connections.
+   */
+  prismaClient?: PrismaClient;
 }
 
 /**
- * Module augmentation so route handlers can access the Temporal client
+ * Module augmentation so route handlers can access injected clients
  * via req.app.locals with type safety.
  */
 declare global {
   namespace Express {
     interface Locals {
       temporalClient?: TemporalClientWrapper;
+      prismaClient?: PrismaClient;
     }
   }
 }
@@ -42,6 +50,10 @@ export function createApp(config: ServerConfig = {}): express.Application {
 
   if (config.temporalClient) {
     app.locals.temporalClient = config.temporalClient;
+  }
+
+  if (config.prismaClient) {
+    app.locals.prismaClient = config.prismaClient;
   }
 
   // --- Global middleware ---
@@ -89,6 +101,15 @@ export function createApp(config: ServerConfig = {}): express.Application {
 export async function startServer(config: ServerConfig = {}) {
   const port = config.port ?? parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10);
 
+  // Wire the singleton Prisma client when none is explicitly provided.
+  // The dynamic import avoids loading the @prisma/client at module evaluation
+  // time (relevant for test environments that do not need a real DB).
+  let prismaClient = config.prismaClient;
+  if (!prismaClient) {
+    const { prisma } = await import("./prisma.js");
+    prismaClient = prisma;
+  }
+
   let temporalClient = config.temporalClient;
 
   if (!temporalClient && config.temporal) {
@@ -100,7 +121,7 @@ export async function startServer(config: ServerConfig = {}) {
     }
   }
 
-  const app = createApp({ ...config, temporalClient });
+  const app = createApp({ ...config, temporalClient, prismaClient });
 
   const server = app.listen(port, () => {
     console.log(`[api] Dejsol API server listening on port ${port}`);

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Analyst - Gamma Corp - Greenhouse Variant (Alt Confirmation)</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f9f9f9; }
+    .opening { max-width: 720px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 8px; }
+    #header .company-name { font-size: 24px; font-weight: bold; color: #333; }
+    .job-post h1 { font-size: 22px; color: #111; }
+    .job-post .meta { color: #666; margin-bottom: 16px; }
+    /* Canonical apply button — same as main fixture */
+    .btn-apply {
+      display: inline-block; padding: 12px 24px; background: #3b8427; color: #fff;
+      text-decoration: none; border-radius: 4px; font-weight: bold; cursor: pointer;
+      border: none; font-size: 16px;
+    }
+    .btn-apply:hover { background: #2d6b1d; }
+    #application { display: none; max-width: 720px; margin: 20px auto; background: #fff; padding: 24px; border-radius: 8px; }
+    #application.visible { display: block; }
+    .field-group { margin-bottom: 16px; }
+    .field-group label { display: block; font-weight: bold; margin-bottom: 4px; color: #333; }
+    .field-group label .required { color: #c00; }
+    .field-group input, .field-group select, .field-group textarea {
+      width: 100%; max-width: 400px; padding: 8px; border: 1px solid #ccc;
+      border-radius: 4px; box-sizing: border-box;
+    }
+    .field-group input[type="file"] { border: none; padding: 4px 0; }
+    #submit_app {
+      padding: 12px 24px; background: #3b8427; color: #fff; border: none;
+      border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 16px;
+    }
+    #submit_app:hover { background: #2d6b1d; }
+    /*
+      Variant confirmation: uses ".confirmation-message" class instead of
+      ".application-confirmation" or "#application_confirmation".
+      Tests the expanded confirmation selector set.
+    */
+    .confirmation-message {
+      display: none; max-width: 720px; margin: 20px auto; background: #fff;
+      padding: 24px; border-radius: 8px; text-align: center;
+      border: 2px solid #3b8427;
+    }
+    .confirmation-message.visible { display: block; }
+    .confirmation-message h2 { color: #3b8427; }
+    .parsing-indicator { display: none; color: #888; font-style: italic; margin: 8px 0; }
+    .parsing-indicator.active { display: block; }
+  </style>
+</head>
+<body>
+  <!-- Job listing — canonical CTA (same as main fixture) -->
+  <div class="opening">
+    <div id="header">
+      <span class="company-name">Gamma Corp</span>
+    </div>
+    <div class="job-post">
+      <h1>Data Analyst</h1>
+      <div class="meta">
+        <span>Department: Analytics</span> &middot;
+        <span>Location: New York, NY</span>
+      </div>
+      <p>Join our analytics team as a Data Analyst.</p>
+      <a href="#application" class="btn-apply" id="app_submit">Apply for this job</a>
+    </div>
+  </div>
+
+  <!-- Application form — canonical resume input -->
+  <div id="application">
+    <h2>Apply for this Job</h2>
+    <form id="application_form" onsubmit="return false;">
+      <div class="field-group">
+        <label for="resume">Resume/CV <span class="required">*</span></label>
+        <input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx,.txt" required />
+        <div class="parsing-indicator" id="parse_indicator">Parsing resume...</div>
+      </div>
+
+      <div class="field-group">
+        <label for="first_name">First Name <span class="required">*</span></label>
+        <input type="text" id="first_name" name="job_application[first_name]" required />
+      </div>
+
+      <div class="field-group">
+        <label for="last_name">Last Name <span class="required">*</span></label>
+        <input type="text" id="last_name" name="job_application[last_name]" required />
+      </div>
+
+      <div class="field-group">
+        <label for="email">Email <span class="required">*</span></label>
+        <input type="email" id="email" name="job_application[email]" required />
+      </div>
+
+      <!-- Phone is intentionally omitted to test optional-field handling -->
+
+      <button type="submit" id="submit_app">Submit Application</button>
+    </form>
+  </div>
+
+  <!--
+    Variant confirmation: ".confirmation-message" instead of ".application-confirmation"
+    Text: "Thank you for your application" instead of "Application submitted"
+    Neither "#application_confirmation" nor ".application-confirmation" is present.
+  -->
+  <div class="confirmation-message" id="alt_confirmation">
+    <h2>Thank you for your application</h2>
+    <p>We have received your application for <strong>Data Analyst</strong> at Gamma Corp.</p>
+    <p>Your application has been received and is under review.</p>
+    <p>Reference: <strong id="confirmation_id">GH-2026-00073</strong></p>
+  </div>
+
+  <script>
+    // Canonical apply entry
+    document.getElementById('app_submit').addEventListener('click', function(e) {
+      e.preventDefault();
+      var appSection = document.getElementById('application');
+      appSection.classList.add('visible');
+      appSection.scrollIntoView({ behavior: 'smooth' });
+    });
+
+    // Canonical resume auto-fill simulation
+    document.getElementById('resume').addEventListener('change', function() {
+      if (this.files && this.files.length > 0) {
+        var indicator = document.getElementById('parse_indicator');
+        indicator.classList.add('active');
+        setTimeout(function() {
+          indicator.classList.remove('active');
+          document.getElementById('first_name').value = 'Parsed';
+          document.getElementById('first_name').dispatchEvent(new Event('input', { bubbles: true }));
+        }, 300);
+      }
+    });
+
+    // Submit: show alt confirmation
+    document.getElementById('submit_app').addEventListener('click', function(e) {
+      e.preventDefault();
+      document.getElementById('application').style.display = 'none';
+      document.getElementById('alt_confirmation').classList.add('visible');
+    });
+  </script>
+</body>
+</html>

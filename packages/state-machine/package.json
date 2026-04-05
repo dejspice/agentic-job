@@ -9,9 +9,12 @@
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
     "test": "node --require tsx/cjs --test src/__tests__/state-machine.test.ts src/__tests__/validation-watcher.test.ts",
+    "test:hardening": "node --require tsx/cjs --test src/__tests__/greenhouse-state-hardening.test.ts",
+    "test:all": "node --require tsx/cjs --test src/__tests__/state-machine.test.ts src/__tests__/validation-watcher.test.ts src/__tests__/greenhouse-state-hardening.test.ts",
     "typecheck:test": "tsc --project tsconfig.test.json"
   },
   "dependencies": {
-    "@dejsol/core": "*"
+    "@dejsol/core": "*",
+    "@dejsol/intelligence": "*"
   }
 }

@@ -39,6 +39,8 @@ export {
   browserActivity,
   submitActivity,
   captureActivity,
+  runGreenhouseHappyPathActivity,
+  executeGreenhouseHappyPath,
 } from "./activities/index.js";
 export type {
   InitActivityInput,
@@ -49,4 +51,6 @@ export type {
   SubmitActivityResult,
   CaptureActivityInput,
   CaptureActivityResult,
+  GreenhouseHappyPathInput,
+  GreenhouseHappyPathResult,
 } from "./activities/index.js";

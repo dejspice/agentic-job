@@ -12,6 +12,8 @@ export interface KnownFlow {
   hasLoginGate?: boolean;
   hasResumeUpload?: boolean;
   hasScreeningQuestions?: boolean;
+  /** True when the ATS form is embedded in an iframe on the employer's own careers page. */
+  isEmbedded?: boolean;
 }
 
 export interface FieldMapping {
