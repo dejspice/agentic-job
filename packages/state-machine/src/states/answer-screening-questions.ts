@@ -76,39 +76,11 @@ async function fillReactSelect(
   const questionId = extractQuestionId(selector);
   const specificOptionPrefix = `[id^="react-select-${questionId}-option"]`;
 
-  // Dismiss any prior open dropdown by clicking the page body first.
-  // Sequential combobox fills can leave the previous dropdown open, which
-  // steals focus and prevents the next combobox from opening.
-  await execute({ type: "CLICK", target: { kind: "css", value: "body" } });
-
-  // Phase 1: Open the dropdown with a focused click to reveal all options
-  await execute({ type: "TYPE", selector, value: "", sequential: true });
-
-  let optionFound = false;
-  const waitResult = await execute({ type: "WAIT_FOR", target: specificOptionPrefix, timeoutMs: 2000 });
-  if (waitResult.success) {
-    optionFound = true;
-  } else {
-    for (const optSel of OPTION_SELECTORS) {
-      const optWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 500 });
-      if (optWait.success) { optionFound = true; break; }
-    }
-  }
-
-  if (optionFound) {
-    const allLabels = await readVisibleOptions(execute, questionId);
-    if (allLabels.length > 0) {
-      const best = pickBestOption(desiredValue, allLabels);
-      if (best) {
-        const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
-        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
-        return true;
-      }
-    }
-  }
-
-  // Phase 2: Retry with a search seed to filter the option list.
-  // Some dropdowns have 50+ options and only render a subset until filtered.
+  // Type the search seed to open the dropdown and filter options.
+  // Using the seed directly (instead of opening with an empty click first)
+  // is more reliable across sequential combobox fills — the scrollIntoView +
+  // click + 400ms delay in the sequential TYPE gives React Select time to
+  // focus and accept keystrokes.
   const seed = searchSeed
     ?? desiredValue.substring(0, Math.min(desiredValue.length, 3));
 
