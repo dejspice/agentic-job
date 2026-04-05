@@ -17,14 +17,15 @@ import { convertResumeToPdf } from "../connectors/drive-converter.js";
 import { writeRowResult } from "../connectors/sheet-writer.js";
 import { runGreenhouseApplication } from "../harness/greenhouse-live-harness.js";
 import type { ApplicationResult } from "../harness/greenhouse-live-harness.js";
+import { RuntimeProvider } from "@dejsol/browser-broker";
 import { loadCandidateProfile } from "./load-candidate.js";
 
 const SPREADSHEET_ID = "1-uOsL9Z6F22lrHaPk30vU-7HmXh2Y9nP6iCNXlovb08";
 const SHEET_NAME = "Job Tracking";
 const ARTIFACT_DIR = resolve("./artifacts-batch");
 
-const TARGET_COMPANIES = ["Wavelo", "SmithRx"];
-const TARGET_ROWS = [97, 101];
+const TARGET_COMPANIES = (process.env["RERUN_COMPANIES"] ?? "Wavelo,SmithRx").split(",").map(s => s.trim());
+const TARGET_ROWS = (process.env["RERUN_ROWS"] ?? "97,101").split(",").map(s => parseInt(s.trim(), 10));
 
 interface RerunResult {
   rowIndex: number;
@@ -48,6 +49,15 @@ async function main(): Promise<void> {
 
   const anthropicKey = process.env["ANTHROPIC_API_KEY"]?.trim();
   console.log(`[rerun] LLM fallback : ${anthropicKey ? "ENABLED" : "DISABLED"}`);
+
+  const providerRaw = (process.env["BROWSER_PROVIDER"] ?? "local").toLowerCase().trim();
+  const providerMap: Record<string, RuntimeProvider> = {
+    local: RuntimeProvider.LOCAL,
+    bright_data: RuntimeProvider.BRIGHT_DATA,
+    browserbase: RuntimeProvider.BROWSERBASE,
+  };
+  const provider = providerMap[providerRaw] ?? RuntimeProvider.LOCAL;
+  console.log(`[rerun] Browser      : ${provider}`);
 
   console.log(`[rerun] Reading Google Sheet (${SPREADSHEET_ID})…`);
   const creds = resolveGoogleCredentials();
@@ -134,7 +144,7 @@ async function main(): Promise<void> {
           country: candidate.country,
           location: `${candidate.city}, ${candidate.state}`,
         },
-        { artifactDir: ARTIFACT_DIR, quiet: false },
+        { artifactDir: ARTIFACT_DIR, quiet: false, provider },
       );
     } catch (err) {
       appResult = {
