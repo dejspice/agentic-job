@@ -16,7 +16,8 @@
     "typecheck:test": "tsc --project tsconfig.test.json",
     "harness:greenhouse-live": "node --require tsx/cjs src/harness/greenhouse-live-harness.ts",
     "demo": "node --require tsx/cjs src/demo/run-demo.ts",
-    "demo:run": "node --require tsx/cjs src/demo/run-demo.ts demo-input.json"
+    "demo:run": "node --require tsx/cjs src/demo/run-demo.ts demo-input.json",
+    "demo:google": "DEMO_SOURCE=google node --require tsx/cjs src/demo/run-demo.ts"
   },
   "dependencies": {
     "@dejsol/browser-worker": "*",
@@ -24,6 +25,8 @@
     "@dejsol/state-machine": "*",
     "@temporalio/activity": "^1.15.0",
     "@temporalio/workflow": "^1.15.0",
+    "google-auth-library": "^10.6.2",
+    "googleapis": "^171.4.0",
     "playwright": "^1.49.0"
   }
 }

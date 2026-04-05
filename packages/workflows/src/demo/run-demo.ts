@@ -1,22 +1,45 @@
 /**
  * Demo CLI — runs the full batch pipeline and prints a clean summary.
  *
+ * Two modes:
+ *   DEMO_SOURCE=local (default)
+ *     Reads from a local JSON/CSV file (demo-input.json)
+ *
+ *   DEMO_SOURCE=google
+ *     Reads pending rows from a real Google Sheet, exports resumes
+ *     from Google Drive, executes applications, writes results back.
+ *
  * Usage:
+ *   # Local mode (default)
  *   node --require tsx/cjs src/demo/run-demo.ts
  *   node --require tsx/cjs src/demo/run-demo.ts path/to/input.json
+ *
+ *   # Google Sheets mode
+ *   DEMO_SOURCE=google \
+ *   GOOGLE_SHEET_ID=1abc... \
+ *   GOOGLE_CREDENTIALS_PATH=/path/to/service-account.json \
+ *   node --require tsx/cjs src/demo/run-demo.ts
+ *
+ * Env vars (Google mode):
+ *   DEMO_SOURCE          — "local" (default) or "google"
+ *   GOOGLE_SHEET_ID      — Spreadsheet ID
+ *   GOOGLE_SHEET_NAME    — Sheet tab name (default: "Applications")
+ *   GOOGLE_CREDENTIALS_PATH — Path to service-account JSON key
  */
 
 import { resolve } from "node:path";
 import { readApplicationSheet } from "./sheet-reader.js";
-import { runBatch } from "./batch-runner.js";
+import { runBatch, runGoogleBatch } from "./batch-runner.js";
 import type { BatchRunResult, BatchSummary } from "./batch-runner.js";
+import { readPendingRows } from "../connectors/sheet-reader.js";
 
 const DIVIDER = "─".repeat(45);
 
-function printHeader(total: number): void {
+function printHeader(total: number, mode: string): void {
   console.log();
   console.log(`[DEMO] ${DIVIDER}`);
   console.log(`[DEMO]  Greenhouse Apply — Batch Demo`);
+  console.log(`[DEMO]  Mode: ${mode}`);
   console.log(`[DEMO] ${DIVIDER}`);
   console.log(`[DEMO]  Loading ${total} job application(s)…`);
   console.log(`[DEMO] ${DIVIDER}`);
@@ -32,7 +55,9 @@ function printProgress(
       ? "✓"
       : result.outcome === "VERIFICATION_REQUIRED"
         ? "⏳"
-        : "✗";
+        : result.outcome === "SKIPPED"
+          ? "⊘"
+          : "✗";
   const duration = (result.durationMs / 1000).toFixed(1);
 
   console.log(
@@ -47,6 +72,9 @@ function printSummary(summary: BatchSummary): void {
   console.log(`[DEMO]  Submitted:     ${summary.submitted}`);
   console.log(`[DEMO]  Verification:  ${summary.verification}`);
   console.log(`[DEMO]  Failed:        ${summary.failed}`);
+  if (summary.skipped > 0) {
+    console.log(`[DEMO]  Skipped:       ${summary.skipped}`);
+  }
   console.log(`[DEMO]  Success rate:  ${summary.successRate}`);
   console.log(`[DEMO] ${DIVIDER}`);
   console.log(`[DEMO]  Results saved: artifacts-batch/run-results.json`);
@@ -54,7 +82,7 @@ function printSummary(summary: BatchSummary): void {
   console.log();
 }
 
-async function main(): Promise<void> {
+async function runLocalMode(): Promise<void> {
   const inputPath = resolve(
     process.argv[2] ?? "./demo-input.json",
   );
@@ -77,7 +105,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  printHeader(rows.length);
+  printHeader(rows.length, "local");
 
   const summary = await runBatch(rows, {
     artifactDir: resolve("./artifacts-batch"),
@@ -87,6 +115,57 @@ async function main(): Promise<void> {
   });
 
   printSummary(summary);
+}
+
+async function runGoogleMode(): Promise<void> {
+  const spreadsheetId = process.env["GOOGLE_SHEET_ID"];
+  if (!spreadsheetId) {
+    console.error("[DEMO] GOOGLE_SHEET_ID is required in Google mode.");
+    process.exit(1);
+  }
+
+  const sheetName = process.env["GOOGLE_SHEET_NAME"] ?? "Applications";
+
+  console.log(`[DEMO] Reading pending rows from Google Sheet…`);
+
+  let rows;
+  try {
+    rows = await readPendingRows({ spreadsheetId, sheetName });
+  } catch (err) {
+    console.error("[DEMO] Failed to read Google Sheet:");
+    console.error(
+      `[DEMO] ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
+  }
+
+  if (rows.length === 0) {
+    console.log("[DEMO] No pending application rows found in sheet.");
+    process.exit(0);
+  }
+
+  printHeader(rows.length, "google");
+
+  const summary = await runGoogleBatch(rows, {
+    spreadsheetId,
+    sheetName,
+    artifactDir: resolve("./artifacts-batch"),
+    outputPath: resolve("./artifacts-batch/run-results.json"),
+    quiet: true,
+    onProgress: printProgress,
+  });
+
+  printSummary(summary);
+}
+
+async function main(): Promise<void> {
+  const source = (process.env["DEMO_SOURCE"] ?? "local").toLowerCase().trim();
+
+  if (source === "google") {
+    await runGoogleMode();
+  } else {
+    await runLocalMode();
+  }
 }
 
 const _scriptPath = process.argv[1] ?? "";

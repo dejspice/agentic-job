@@ -1,8 +1,10 @@
 /**
  * Batch Runner — executes multiple Greenhouse applications sequentially.
  *
- * Reads rows from the sheet reader and runs each through the full
- * Greenhouse apply flow via runGreenhouseApplication.
+ * Supports two modes:
+ *   - "local": reads rows from ApplicationRow[] (local JSON/CSV)
+ *   - "google": reads from Google Sheets, exports resumes from Drive,
+ *               writes results back to the Sheet
  */
 
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -11,15 +13,21 @@ import { randomUUID } from "node:crypto";
 import type { ApplicationRow } from "./sheet-reader.js";
 import { runGreenhouseApplication } from "../harness/greenhouse-live-harness.js";
 import type { ApplicationResult } from "../harness/greenhouse-live-harness.js";
+import { detectATS, isSupported } from "@dejsol/core";
+import { convertResumeToPdf } from "../connectors/drive-converter.js";
+import { writeRowResult } from "../connectors/sheet-writer.js";
+import type { WritebackStatus } from "../connectors/sheet-writer.js";
+import type { SheetApplicationRow } from "../connectors/sheet-reader.js";
 
 export interface BatchRunResult {
   runId: string;
   jobUrl: string;
   candidate: string;
-  outcome: "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED";
+  outcome: "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED" | "SKIPPED";
   durationMs: number;
   verificationRequired: boolean;
   error?: string;
+  sheetRowIndex?: number;
 }
 
 export interface BatchSummary {
@@ -30,15 +38,22 @@ export interface BatchSummary {
   submitted: number;
   verification: number;
   failed: number;
+  skipped: number;
   successRate: string;
   results: BatchRunResult[];
 }
 
+function outcomeToWritebackStatus(outcome: BatchRunResult["outcome"]): WritebackStatus {
+  switch (outcome) {
+    case "SUBMITTED": return "submitted";
+    case "VERIFICATION_REQUIRED": return "verification_required";
+    case "FAILED": return "failed";
+    case "SKIPPED": return "skipped";
+  }
+}
+
 /**
- * Run a batch of Greenhouse applications sequentially.
- *
- * For each row, executes the full apply flow and captures the result.
- * Writes results to the specified output file.
+ * Run a batch of applications from local ApplicationRow data.
  */
 export async function runBatch(
   rows: ApplicationRow[],
@@ -65,7 +80,7 @@ export async function runBatch(
 
     if (!quiet) {
       console.log(
-        `\n[BATCH] [${ i + 1}/${rows.length}] ${candidateName} → ${row.jobUrl}`,
+        `\n[BATCH] [${i + 1}/${rows.length}] ${candidateName} → ${row.jobUrl}`,
       );
     }
 
@@ -127,6 +142,214 @@ export async function runBatch(
     }
   }
 
+  return finalizeBatch(batchId, startedAt, results, rows.length, outputPath);
+}
+
+/**
+ * Run a batch of applications from Google Sheets rows.
+ *
+ * For each row:
+ *   1. Check ATS support (skip unsupported)
+ *   2. Export resume from Google Drive to local PDF
+ *   3. Execute the Greenhouse apply flow
+ *   4. Write result back to the Google Sheet
+ */
+export async function runGoogleBatch(
+  rows: SheetApplicationRow[],
+  options: {
+    spreadsheetId: string;
+    sheetName?: string;
+    artifactDir?: string;
+    outputPath?: string;
+    quiet?: boolean;
+    onProgress?: (completed: number, total: number, result: BatchRunResult) => void;
+  },
+): Promise<BatchSummary> {
+  const batchId = randomUUID().slice(0, 8);
+  const artifactDir = resolve(options.artifactDir ?? "./artifacts-batch");
+  const outputPath = resolve(
+    options.outputPath ?? "./artifacts-batch/run-results.json",
+  );
+  const quiet = options.quiet ?? false;
+
+  const results: BatchRunResult[] = [];
+  const startedAt = new Date().toISOString();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const candidateName = `${row.firstName} ${row.lastName}`;
+
+    if (!quiet) {
+      console.log(
+        `\n[BATCH] [${i + 1}/${rows.length}] ${candidateName} → ${row.jobUrl}`,
+      );
+    }
+
+    const start = Date.now();
+
+    const ats = detectATS(row.jobUrl);
+    if (!isSupported(ats)) {
+      const durationMs = Date.now() - start;
+      const batchResult: BatchRunResult = {
+        runId: randomUUID(),
+        jobUrl: row.jobUrl,
+        candidate: candidateName,
+        outcome: "SKIPPED",
+        durationMs,
+        verificationRequired: false,
+        error: `Unsupported ATS: ${ats}`,
+        sheetRowIndex: row.rowIndex,
+      };
+      results.push(batchResult);
+
+      try {
+        await writeRowResult(
+          { spreadsheetId: options.spreadsheetId, sheetName: options.sheetName },
+          {
+            rowIndex: row.rowIndex,
+            status: "skipped",
+            runId: batchResult.runId,
+            outcome: "SKIPPED",
+            error: `Unsupported ATS: ${ats}`,
+            completedAt: new Date().toISOString(),
+          },
+        );
+      } catch {
+        // Writeback failure is non-fatal
+      }
+
+      if (options.onProgress) {
+        options.onProgress(i + 1, rows.length, batchResult);
+      }
+      continue;
+    }
+
+    let resumePath: string;
+    try {
+      if (!quiet) console.log(`[BATCH]   Exporting resume…`);
+      resumePath = await convertResumeToPdf(row.resumeLink, {
+        outputDir: resolve(artifactDir, "resumes"),
+        filename: `${row.firstName}-${row.lastName}-resume`,
+      });
+    } catch (err) {
+      const durationMs = Date.now() - start;
+      const batchResult: BatchRunResult = {
+        runId: randomUUID(),
+        jobUrl: row.jobUrl,
+        candidate: candidateName,
+        outcome: "FAILED",
+        durationMs,
+        verificationRequired: false,
+        error: `Resume export failed: ${err instanceof Error ? err.message : String(err)}`,
+        sheetRowIndex: row.rowIndex,
+      };
+      results.push(batchResult);
+
+      try {
+        await writeRowResult(
+          { spreadsheetId: options.spreadsheetId, sheetName: options.sheetName },
+          {
+            rowIndex: row.rowIndex,
+            status: "failed",
+            runId: batchResult.runId,
+            outcome: "FAILED",
+            error: batchResult.error,
+            completedAt: new Date().toISOString(),
+          },
+        );
+      } catch {
+        // Writeback failure is non-fatal
+      }
+
+      if (options.onProgress) {
+        options.onProgress(i + 1, rows.length, batchResult);
+      }
+      continue;
+    }
+
+    let appResult: ApplicationResult;
+    try {
+      appResult = await runGreenhouseApplication(
+        {
+          jobUrl: row.jobUrl,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: row.email,
+          phone: row.phone,
+          resumePath,
+        },
+        {
+          artifactDir,
+          quiet,
+        },
+      );
+    } catch (err) {
+      appResult = {
+        outcome: "FAILED",
+        runId: randomUUID(),
+        verificationRequired: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+
+    const durationMs = Date.now() - start;
+
+    const batchResult: BatchRunResult = {
+      runId: appResult.runId,
+      jobUrl: row.jobUrl,
+      candidate: candidateName,
+      outcome: appResult.outcome,
+      durationMs,
+      verificationRequired: appResult.verificationRequired,
+      sheetRowIndex: row.rowIndex,
+      ...(appResult.error ? { error: appResult.error } : {}),
+    };
+
+    results.push(batchResult);
+
+    try {
+      await writeRowResult(
+        { spreadsheetId: options.spreadsheetId, sheetName: options.sheetName },
+        {
+          rowIndex: row.rowIndex,
+          status: outcomeToWritebackStatus(appResult.outcome),
+          runId: appResult.runId,
+          outcome: appResult.outcome,
+          error: appResult.error,
+          completedAt: new Date().toISOString(),
+        },
+      );
+    } catch {
+      // Writeback failure is non-fatal
+    }
+
+    if (options.onProgress) {
+      options.onProgress(i + 1, rows.length, batchResult);
+    }
+
+    if (!quiet) {
+      const icon =
+        appResult.outcome === "SUBMITTED"
+          ? "✓"
+          : appResult.outcome === "VERIFICATION_REQUIRED"
+            ? "⏳"
+            : "✗";
+      console.log(
+        `[BATCH] ${icon} ${appResult.outcome} (${(durationMs / 1000).toFixed(1)}s)`,
+      );
+    }
+  }
+
+  return finalizeBatch(batchId, startedAt, results, rows.length, outputPath);
+}
+
+function finalizeBatch(
+  batchId: string,
+  startedAt: string,
+  results: BatchRunResult[],
+  totalJobs: number,
+  outputPath: string,
+): BatchSummary {
   const completedAt = new Date().toISOString();
 
   const submitted = results.filter((r) => r.outcome === "SUBMITTED").length;
@@ -134,19 +357,21 @@ export async function runBatch(
     (r) => r.outcome === "VERIFICATION_REQUIRED",
   ).length;
   const failed = results.filter((r) => r.outcome === "FAILED").length;
+  const skipped = results.filter((r) => r.outcome === "SKIPPED").length;
   const successRate =
-    rows.length > 0
-      ? `${Math.round(((submitted + verification) / rows.length) * 100)}%`
+    totalJobs > 0
+      ? `${Math.round(((submitted + verification) / totalJobs) * 100)}%`
       : "0%";
 
   const summary: BatchSummary = {
     batchId,
     startedAt,
     completedAt,
-    totalJobs: rows.length,
+    totalJobs,
     submitted,
     verification,
     failed,
+    skipped,
     successRate,
     results,
   };
