@@ -33,6 +33,9 @@ const ANSWER_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
   ["no",              ["no, i do not", "no, i don't", "no, i have not", "no, i haven't",
                        "no, i am not", "no, i'm not", "no, i will not", "no, i won't"]],
 
+  // ── Country name variants ──────────────────────────────────────────
+  ["united states",   ["usa", "us", "u.s.", "u.s.a.", "united states of america", "america"]],
+
   // ── Industry categories ──────────────────────────────────────────────
   ["technology",      ["tech", "software", "information technology", "it",
                        "saas", "internet", "software / saas", "technology / software"]],
