@@ -124,9 +124,9 @@ async function runGoogleMode(): Promise<void> {
     process.exit(1);
   }
 
-  const sheetName = process.env["GOOGLE_SHEET_NAME"] ?? "Applications";
+  const sheetName = process.env["GOOGLE_SHEET_NAME"] ?? "Job Tracking";
 
-  console.log(`[DEMO] Reading pending rows from Google Sheet…`);
+  console.log(`[DEMO] Reading pending rows from Google Sheet (tab: ${sheetName})…`);
 
   let rows;
   try {
@@ -142,6 +142,11 @@ async function runGoogleMode(): Promise<void> {
   if (rows.length === 0) {
     console.log("[DEMO] No pending application rows found in sheet.");
     process.exit(0);
+  }
+
+  console.log(`[DEMO] Found ${rows.length} pending row(s). First 3:`);
+  for (const r of rows.slice(0, 3)) {
+    console.log(`[DEMO]   Row ${r.rowIndex}: ${r.company} — ${r.jobTitle} (${r.resumeId})`);
   }
 
   printHeader(rows.length, "google");

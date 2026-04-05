@@ -2,10 +2,16 @@
  * Google Sheets Writer — writes status/results back to a Google Sheet.
  *
  * Updates specific cells in a row to reflect the outcome of an application run.
- * Aligned with the sheet layout defined in sheet-reader.ts:
- *   A: status | B: job_url | C: first_name | D: last_name | E: email
- *   F: phone | G: resume_link | H: company | I: job_title
- *   J: run_id | K: outcome | L: error | M: completed_at
+ * Aligned with the real sheet layout ("Job Tracking" tab):
+ *   A: # (resume id) | B: Job Title | C: Company | D: Location
+ *   E: Status        | F: Application Date | G: Application URL
+ *   H: Resume Link   | I: Notes
+ *   J: run_id        | K: outcome   | L: error   | M: completed_at
+ *
+ * Writeback updates:
+ *   E (Status) — e.g. "Applied", "Failed", "Skipped"
+ *   F (Application Date) — ISO timestamp
+ *   J:M — run metadata
  */
 
 import { google } from "googleapis";
@@ -15,12 +21,11 @@ import { resolveGoogleCredentials } from "./google-auth.js";
 const SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
 export type WritebackStatus =
-  | "submitted"
-  | "verification_required"
-  | "failed"
-  | "skipped"
-  | "pending_lever"
-  | "needs_review";
+  | "Applied"
+  | "Verification Required"
+  | "Failed"
+  | "Skipped"
+  | "Not Applied";
 
 export interface WritebackResult {
   rowIndex: number;
@@ -38,13 +43,13 @@ export interface SheetWriterOptions {
 
 /**
  * Write a single row's result back to the Google Sheet.
- * Updates columns A (status), J (run_id), K (outcome), L (error), M (completed_at).
+ * Updates E (Status), F (Application Date), J:M (run metadata).
  */
 export async function writeRowResult(
   options: SheetWriterOptions,
   result: WritebackResult,
 ): Promise<void> {
-  const sheetName = options.sheetName ?? "Applications";
+  const sheetName = options.sheetName ?? "Job Tracking";
   const creds = resolveGoogleCredentials();
 
   const auth = new GoogleAuth({
@@ -55,6 +60,7 @@ export async function writeRowResult(
 
   const sheets = google.sheets({ version: "v4", auth });
   const row = result.rowIndex;
+  const completedAt = result.completedAt ?? new Date().toISOString();
 
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: options.spreadsheetId,
@@ -62,16 +68,16 @@ export async function writeRowResult(
       valueInputOption: "RAW",
       data: [
         {
-          range: `${sheetName}!A${row}`,
-          values: [[result.status]],
+          range: `'${sheetName}'!E${row}:F${row}`,
+          values: [[result.status, completedAt]],
         },
         {
-          range: `${sheetName}!J${row}:M${row}`,
+          range: `'${sheetName}'!J${row}:M${row}`,
           values: [[
             result.runId,
             result.outcome,
             result.error ?? "",
-            result.completedAt ?? new Date().toISOString(),
+            completedAt,
           ]],
         },
       ],
@@ -88,7 +94,7 @@ export async function writeBatchResults(
 ): Promise<void> {
   if (results.length === 0) return;
 
-  const sheetName = options.sheetName ?? "Applications";
+  const sheetName = options.sheetName ?? "Job Tracking";
   const creds = resolveGoogleCredentials();
 
   const auth = new GoogleAuth({
@@ -98,22 +104,26 @@ export async function writeBatchResults(
   });
 
   const sheets = google.sheets({ version: "v4", auth });
+  const now = new Date().toISOString();
 
-  const data = results.flatMap((r) => [
-    {
-      range: `${sheetName}!A${r.rowIndex}`,
-      values: [[r.status]],
-    },
-    {
-      range: `${sheetName}!J${r.rowIndex}:M${r.rowIndex}`,
-      values: [[
-        r.runId,
-        r.outcome,
-        r.error ?? "",
-        r.completedAt ?? new Date().toISOString(),
-      ]],
-    },
-  ]);
+  const data = results.flatMap((r) => {
+    const completedAt = r.completedAt ?? now;
+    return [
+      {
+        range: `'${sheetName}'!E${r.rowIndex}:F${r.rowIndex}`,
+        values: [[r.status, completedAt]],
+      },
+      {
+        range: `'${sheetName}'!J${r.rowIndex}:M${r.rowIndex}`,
+        values: [[
+          r.runId,
+          r.outcome,
+          r.error ?? "",
+          completedAt,
+        ]],
+      },
+    ];
+  });
 
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: options.spreadsheetId,

@@ -1,13 +1,19 @@
 /**
  * Google Sheets Reader — reads pending application rows from a real Google Sheet.
  *
- * Expected sheet layout (row 1 is header):
- *   A: status | B: job_url | C: first_name | D: last_name | E: email
- *   F: phone | G: resume_link | H: company | I: job_title
- *   J: run_id | K: outcome | L: error | M: completed_at
+ * Real sheet layout ("Job Tracking" tab, row 1 is header):
+ *   A: # (resume id)  | B: Job Title    | C: Company  | D: Location
+ *   E: Status         | F: Application Date | G: Application URL
+ *   H: Resume Link    | I: Notes
+ *   J: run_id         | K: outcome      | L: error    | M: completed_at
  *
- * Only rows where column A (status) is empty or "pending" are returned.
- * resume_link can be a Google Docs URL, a Google Drive file ID, or a local path.
+ * Only rows where column E (Status) is "Not Applied" or empty are returned.
+ * resume_link (col H) can be a Google Docs URL, a Google Drive file ID,
+ * or a local path.
+ *
+ * Candidate info (firstName, lastName, email, phone) is NOT in the sheet —
+ * it's a single-user job tracker. The caller provides candidate details
+ * via env vars or explicit arguments.
  */
 
 import { google } from "googleapis";
@@ -18,15 +24,20 @@ const SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"];
 
 export interface SheetApplicationRow {
   rowIndex: number;
+  resumeId: string;
+  jobTitle: string;
+  company: string;
+  location: string;
   status: string;
+  applicationDate: string;
   jobUrl: string;
+  resumeLink: string;
+  notes: string;
+  /** Injected by the caller — not from the sheet. */
   firstName: string;
   lastName: string;
   email: string;
   phone: string;
-  resumeLink: string;
-  company: string;
-  jobTitle: string;
 }
 
 export interface SheetReaderOptions {
@@ -35,14 +46,25 @@ export interface SheetReaderOptions {
   credentialsPath?: string;
 }
 
+export interface CandidateInfo {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+}
+
 /**
  * Read pending application rows from a Google Sheet.
- * Returns rows where status is empty or "pending".
+ * Returns rows where Status (col E) is "Not Applied" or empty.
+ *
+ * Candidate info is injected into each row from the provided defaults
+ * since the sheet is a single-user job tracker.
  */
 export async function readPendingRows(
   options: SheetReaderOptions,
+  candidate?: CandidateInfo,
 ): Promise<SheetApplicationRow[]> {
-  const sheetName = options.sheetName ?? "Applications";
+  const sheetName = options.sheetName ?? "Job Tracking";
   const creds = resolveGoogleCredentials();
 
   const auth = new GoogleAuth({
@@ -53,7 +75,7 @@ export async function readPendingRows(
 
   const sheets = google.sheets({ version: "v4", auth });
 
-  const range = `${sheetName}!A2:M`;
+  const range = `'${sheetName}'!A2:M`;
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: options.spreadsheetId,
     range,
@@ -63,30 +85,36 @@ export async function readPendingRows(
   const rawRows = (res.data.values ?? []) as string[][];
   const pending: SheetApplicationRow[] = [];
 
+  const firstName = candidate?.firstName ?? process.env["CANDIDATE_FIRST_NAME"] ?? "Test";
+  const lastName = candidate?.lastName ?? process.env["CANDIDATE_LAST_NAME"] ?? "Candidate";
+  const email = candidate?.email ?? process.env["CANDIDATE_EMAIL"] ?? "test@example.com";
+  const phone = candidate?.phone ?? process.env["CANDIDATE_PHONE"] ?? "";
+
   for (let i = 0; i < rawRows.length; i++) {
     const row = rawRows[i];
-    const status = String(row[0] ?? "").trim().toLowerCase();
+    const status = String(row[4] ?? "").trim();
+    const statusLower = status.toLowerCase();
 
-    if (status !== "" && status !== "pending") continue;
+    if (statusLower !== "" && statusLower !== "not applied" && statusLower !== "pending") continue;
 
-    const jobUrl = String(row[1] ?? "").trim();
-    const firstName = String(row[2] ?? "").trim();
-    const lastName = String(row[3] ?? "").trim();
-    const email = String(row[4] ?? "").trim();
-
-    if (!jobUrl || !firstName || !lastName || !email) continue;
+    const jobUrl = String(row[6] ?? "").trim();
+    if (!jobUrl) continue;
 
     pending.push({
       rowIndex: i + 2,
-      status: status || "pending",
+      resumeId: String(row[0] ?? "").trim(),
+      jobTitle: String(row[1] ?? "").trim(),
+      company: String(row[2] ?? "").trim(),
+      location: String(row[3] ?? "").trim(),
+      status: status || "Not Applied",
+      applicationDate: String(row[5] ?? "").trim(),
       jobUrl,
+      resumeLink: String(row[7] ?? "").trim(),
+      notes: String(row[8] ?? "").trim(),
       firstName,
       lastName,
       email,
-      phone: String(row[5] ?? "").trim(),
-      resumeLink: String(row[6] ?? "").trim(),
-      company: String(row[7] ?? "").trim(),
-      jobTitle: String(row[8] ?? "").trim(),
+      phone,
     });
   }
 

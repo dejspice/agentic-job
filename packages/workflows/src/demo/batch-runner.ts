@@ -45,10 +45,10 @@ export interface BatchSummary {
 
 function outcomeToWritebackStatus(outcome: BatchRunResult["outcome"]): WritebackStatus {
   switch (outcome) {
-    case "SUBMITTED": return "submitted";
-    case "VERIFICATION_REQUIRED": return "verification_required";
-    case "FAILED": return "failed";
-    case "SKIPPED": return "skipped";
+    case "SUBMITTED": return "Applied";
+    case "VERIFICATION_REQUIRED": return "Verification Required";
+    case "FAILED": return "Failed";
+    case "SKIPPED": return "Skipped";
   }
 }
 
@@ -207,7 +207,7 @@ export async function runGoogleBatch(
           { spreadsheetId: options.spreadsheetId, sheetName: options.sheetName },
           {
             rowIndex: row.rowIndex,
-            status: "skipped",
+            status: "Skipped",
             runId: batchResult.runId,
             outcome: "SKIPPED",
             error: `Unsupported ATS: ${ats}`,
@@ -250,7 +250,7 @@ export async function runGoogleBatch(
           { spreadsheetId: options.spreadsheetId, sheetName: options.sheetName },
           {
             rowIndex: row.rowIndex,
-            status: "failed",
+            status: "Failed",
             runId: batchResult.runId,
             outcome: "FAILED",
             error: batchResult.error,
