@@ -262,7 +262,15 @@ export const answerScreeningQuestionsState: StateHandler = {
       const selector = q.selector;
       let filled = false;
 
-      if (rule.interaction === "react-select") {
+      // Use the actual field role to pick the interaction strategy.
+      // A rule may declare "text" but the real field is a combobox, or
+      // vice-versa. The DOM role is the source of truth.
+      const useReactSelect =
+        q.role === "combobox"
+          ? true
+          : rule.interaction === "react-select";
+
+      if (useReactSelect) {
         const fillOk = await fillReactSelect(context.execute, selector, value, rule.searchSeed);
         if (fillOk) {
           answered.push(q.label);
