@@ -360,9 +360,12 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   },
 
   // ── Currently using product ───────────────────────────────────────────
+  // Only match short "have you used <product>?" yes/no questions.
+  // Exclude long freeform questions that ask "what ... have you used"
+  // (e.g. "What AI tools have you used to help enhance the work you do?")
   {
     name: "used_product",
-    pattern: /have\s*you\s*used\s+\w+\b(?!\s*robinhood.*employee|.*worked)/i,
+    pattern: /^have\s*you\s*used\s+\w+\b(?!\s*robinhood.*employee|.*worked)/i,
     answer: { kind: "literal", value: "Yes" },
     interaction: "react-select",
   },

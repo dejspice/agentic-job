@@ -12,7 +12,9 @@
 
 import { resolve } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { readPendingRows } from "../connectors/sheet-reader.js";
+import { google } from "googleapis";
+import { GoogleAuth } from "google-auth-library";
+import { resolveGoogleCredentials } from "../connectors/google-auth.js";
 import { convertResumeToPdf } from "../connectors/drive-converter.js";
 import { writeRowResult } from "../connectors/sheet-writer.js";
 import { runGreenhouseApplication } from "../harness/greenhouse-live-harness.js";
@@ -53,23 +55,64 @@ async function main(): Promise<void> {
     console.log("[rerun] WARNING: Running without LLM fallback — freeform questions will be skipped.");
   }
 
-  // 2. Read target rows from Google Sheet
+  // 2. Read target rows directly from Google Sheet (including Failed status)
   console.log(`[rerun] Reading Google Sheet (${SPREADSHEET_ID})…`);
-  const allRows = await readPendingRows({ spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME });
-  const targetRows = allRows.filter(
-    (r) => TARGET_ROWS.includes(r.rowIndex) && TARGET_COMPANIES.includes(r.company),
-  );
+  const creds = resolveGoogleCredentials();
+  const auth = new GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    ...(creds.keyFile ? { keyFile: creds.keyFile } : {}),
+    ...(creds.credentials ? { credentials: creds.credentials } : {}),
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+  const range = `'${SHEET_NAME}'!A2:M`;
+  const sheetRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range,
+    valueRenderOption: "UNFORMATTED_VALUE",
+  });
+  const rawRows = (sheetRes.data.values ?? []) as string[][];
+
+  const firstName = process.env["CANDIDATE_FIRST_NAME"] ?? "Test";
+  const lastName = process.env["CANDIDATE_LAST_NAME"] ?? "Candidate";
+  const email = process.env["CANDIDATE_EMAIL"] ?? "test@example.com";
+  const phone = process.env["CANDIDATE_PHONE"] ?? "";
+
+  interface TargetRow {
+    rowIndex: number;
+    company: string;
+    jobTitle: string;
+    jobUrl: string;
+    resumeLink: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+  }
+  const targetRows: TargetRow[] = [];
+  for (let i = 0; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    const rowIndex = i + 2;
+    const company = String(row[2] ?? "").trim();
+    const jobUrl = String(row[6] ?? "").trim();
+    const resumeLink = String(row[7] ?? "").trim();
+    if (TARGET_ROWS.includes(rowIndex) && TARGET_COMPANIES.includes(company) && jobUrl) {
+      targetRows.push({
+        rowIndex,
+        company,
+        jobTitle: String(row[1] ?? "").trim(),
+        jobUrl,
+        resumeLink,
+        firstName,
+        lastName,
+        email,
+        phone,
+      });
+    }
+  }
 
   if (targetRows.length === 0) {
-    console.log("[rerun] No matching rows found. They may have been already processed.");
-    console.log("[rerun] Looking for any Wavelo/SmithRx pending rows…");
-    const fallbackRows = allRows.filter((r) => TARGET_COMPANIES.includes(r.company));
-    if (fallbackRows.length === 0) {
-      console.log("[rerun] No Wavelo/SmithRx rows remain pending. Exiting.");
-      return;
-    }
-    console.log(`[rerun] Found ${fallbackRows.length} Wavelo/SmithRx rows. Using first two.`);
-    targetRows.push(...fallbackRows.slice(0, 2));
+    console.log("[rerun] No matching rows found at expected positions. Exiting.");
+    return;
   }
 
   console.log(`[rerun] Target rows: ${targetRows.length}`);
