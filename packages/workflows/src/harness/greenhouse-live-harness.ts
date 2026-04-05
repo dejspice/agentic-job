@@ -97,6 +97,7 @@ export interface HarnessConfig {
     lastName: string;
     email: string;
     phone?: string;
+    city?: string;
     country?: string;
     location?: string;
     linkedin?: string;
@@ -294,6 +295,7 @@ export async function runGreenhouseApplication(
       lastName: input.lastName,
       email: input.email,
       phone: input.phone,
+      city: input.city,
       country: input.country,
       location: input.location,
       state: input.state,
