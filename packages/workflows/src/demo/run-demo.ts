@@ -9,22 +9,21 @@
  *     Reads pending rows from a real Google Sheet, exports resumes
  *     from Google Drive, executes applications, writes results back.
  *
+ * Candidate data is loaded from candidate.json (co-located with this file).
+ * No CANDIDATE_* env vars are required.
+ *
  * Usage:
  *   # Local mode (default)
  *   node --require tsx/cjs src/demo/run-demo.ts
- *   node --require tsx/cjs src/demo/run-demo.ts path/to/input.json
  *
  *   # Google Sheets mode
- *   DEMO_SOURCE=google \
- *   GOOGLE_SHEET_ID=1abc... \
- *   GOOGLE_CREDENTIALS_PATH=/path/to/service-account.json \
- *   node --require tsx/cjs src/demo/run-demo.ts
+ *   DEMO_SOURCE=google node --require tsx/cjs src/demo/run-demo.ts
  *
- * Env vars (Google mode):
+ * Env vars:
  *   DEMO_SOURCE          — "local" (default) or "google"
- *   GOOGLE_SHEET_ID      — Spreadsheet ID
- *   GOOGLE_SHEET_NAME    — Sheet tab name (default: "Applications")
- *   GOOGLE_CREDENTIALS_PATH — Path to service-account JSON key
+ *   GOOGLE_SHEET_ID      — Spreadsheet ID (Google mode)
+ *   GOOGLE_SHEET_NAME    — Sheet tab name (default: "Job Tracking")
+ *   DEMO_LIMIT           — Max rows to process (0 = unlimited)
  */
 
 import { resolve } from "node:path";
@@ -32,6 +31,7 @@ import { readApplicationSheet } from "./sheet-reader.js";
 import { runBatch, runGoogleBatch } from "./batch-runner.js";
 import type { BatchRunResult, BatchSummary } from "./batch-runner.js";
 import { readPendingRows } from "../connectors/sheet-reader.js";
+import { loadCandidateProfile } from "./load-candidate.js";
 
 const DIVIDER = "─".repeat(45);
 
@@ -124,13 +124,25 @@ async function runGoogleMode(): Promise<void> {
     process.exit(1);
   }
 
+  const candidate = loadCandidateProfile();
+  console.log(`[DEMO] Candidate: ${candidate.firstName} ${candidate.lastName} (${candidate.email})`);
+  console.log(`[DEMO] Phone: ${candidate.phone} | City: ${candidate.city} | State: ${candidate.state}`);
+
   const sheetName = process.env["GOOGLE_SHEET_NAME"] ?? "Job Tracking";
 
   console.log(`[DEMO] Reading pending rows from Google Sheet (tab: ${sheetName})…`);
 
   let rows;
   try {
-    rows = await readPendingRows({ spreadsheetId, sheetName });
+    rows = await readPendingRows(
+      { spreadsheetId, sheetName },
+      {
+        firstName: candidate.firstName,
+        lastName: candidate.lastName,
+        email: candidate.email,
+        phone: candidate.phone,
+      },
+    );
   } catch (err) {
     console.error("[DEMO] Failed to read Google Sheet:");
     console.error(
@@ -164,6 +176,11 @@ async function runGoogleMode(): Promise<void> {
     artifactDir: resolve("./artifacts-batch"),
     outputPath: resolve("./artifacts-batch/run-results.json"),
     quiet: true,
+    candidateProfile: {
+      city: candidate.city,
+      state: candidate.state,
+      country: candidate.country,
+    },
     onProgress: printProgress,
   });
 

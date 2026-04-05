@@ -2,12 +2,10 @@
  * Targeted rerun of Wavelo and SmithRx rows from the Google Sheet
  * with real Anthropic-backed LLM fallback enabled.
  *
+ * Uses the structured candidate profile from candidate.json.
+ *
  * Usage:
  *   node --require tsx/cjs src/demo/rerun-wavelo-smithrx.ts
- *
- * Expects env vars:
- *   ANTHROPIC_API_KEY — Claude API key for LLM fallback
- *   GOOGLE_CREDENTIALS_JSON or GOOGLE_CREDENTIALS_PATH — Google API auth
  */
 
 import { resolve } from "node:path";
@@ -19,6 +17,7 @@ import { convertResumeToPdf } from "../connectors/drive-converter.js";
 import { writeRowResult } from "../connectors/sheet-writer.js";
 import { runGreenhouseApplication } from "../harness/greenhouse-live-harness.js";
 import type { ApplicationResult } from "../harness/greenhouse-live-harness.js";
+import { loadCandidateProfile } from "./load-candidate.js";
 
 const SPREADSHEET_ID = "1-uOsL9Z6F22lrHaPk30vU-7HmXh2Y9nP6iCNXlovb08";
 const SHEET_NAME = "Job Tracking";
@@ -38,24 +37,18 @@ interface RerunResult {
   statesCompleted?: string[];
   finalState?: string;
   llmFallbackEnabled: boolean;
-  screeningAnswered?: unknown;
-  screeningSkipped?: unknown;
-  screeningFailed?: unknown;
 }
 
 async function main(): Promise<void> {
   console.log("\n=== Wavelo & SmithRx Targeted Rerun ===\n");
 
-  // 1. Confirm Anthropic LLM fallback
-  const anthropicKey = process.env["ANTHROPIC_API_KEY"]?.trim();
-  if (anthropicKey) {
-    console.log("[rerun] LLM fallback : ENABLED (ANTHROPIC_API_KEY present)");
-  } else {
-    console.log("[rerun] LLM fallback : DISABLED (no ANTHROPIC_API_KEY)");
-    console.log("[rerun] WARNING: Running without LLM fallback — freeform questions will be skipped.");
-  }
+  const candidate = loadCandidateProfile();
+  console.log(`[rerun] Candidate: ${candidate.firstName} ${candidate.lastName} (${candidate.email})`);
+  console.log(`[rerun] Phone: ${candidate.phone} | City: ${candidate.city} | State: ${candidate.state}`);
 
-  // 2. Read target rows directly from Google Sheet (including Failed status)
+  const anthropicKey = process.env["ANTHROPIC_API_KEY"]?.trim();
+  console.log(`[rerun] LLM fallback : ${anthropicKey ? "ENABLED" : "DISABLED"}`);
+
   console.log(`[rerun] Reading Google Sheet (${SPREADSHEET_ID})…`);
   const creds = resolveGoogleCredentials();
   const auth = new GoogleAuth({
@@ -72,21 +65,12 @@ async function main(): Promise<void> {
   });
   const rawRows = (sheetRes.data.values ?? []) as string[][];
 
-  const firstName = process.env["CANDIDATE_FIRST_NAME"] ?? "Test";
-  const lastName = process.env["CANDIDATE_LAST_NAME"] ?? "Candidate";
-  const email = process.env["CANDIDATE_EMAIL"] ?? "test@example.com";
-  const phone = process.env["CANDIDATE_PHONE"] ?? "";
-
   interface TargetRow {
     rowIndex: number;
     company: string;
     jobTitle: string;
     jobUrl: string;
     resumeLink: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string;
   }
   const targetRows: TargetRow[] = [];
   for (let i = 0; i < rawRows.length; i++) {
@@ -96,17 +80,7 @@ async function main(): Promise<void> {
     const jobUrl = String(row[6] ?? "").trim();
     const resumeLink = String(row[7] ?? "").trim();
     if (TARGET_ROWS.includes(rowIndex) && TARGET_COMPANIES.includes(company) && jobUrl) {
-      targetRows.push({
-        rowIndex,
-        company,
-        jobTitle: String(row[1] ?? "").trim(),
-        jobUrl,
-        resumeLink,
-        firstName,
-        lastName,
-        email,
-        phone,
-      });
+      targetRows.push({ rowIndex, company, jobTitle: String(row[1] ?? "").trim(), jobUrl, resumeLink });
     }
   }
 
@@ -118,140 +92,99 @@ async function main(): Promise<void> {
   console.log(`[rerun] Target rows: ${targetRows.length}`);
   for (const r of targetRows) {
     console.log(`[rerun]   Row ${r.rowIndex}: ${r.company} — ${r.jobTitle}`);
-    console.log(`[rerun]     URL: ${r.jobUrl}`);
-    console.log(`[rerun]     Resume: ${r.resumeLink}`);
   }
 
-  // 3. Execute each row
   const results: RerunResult[] = [];
 
   for (const row of targetRows) {
     console.log(`\n[rerun] ─── Running: ${row.company} — ${row.jobTitle} ───`);
-
     const start = Date.now();
 
-    // 3a. Export resume
     let resumePath: string;
     try {
       console.log(`[rerun]   Exporting resume from Google Drive…`);
       resumePath = await convertResumeToPdf(row.resumeLink, {
         outputDir: resolve(ARTIFACT_DIR, "resumes"),
-        filename: `${row.firstName}-${row.lastName}-resume-row${row.rowIndex}`,
+        filename: `${candidate.firstName}-${candidate.lastName}-resume-row${row.rowIndex}`,
       });
       console.log(`[rerun]   Resume exported: ${resumePath}`);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`[rerun]   Resume export FAILED: ${errMsg}`);
       results.push({
-        rowIndex: row.rowIndex,
-        company: row.company,
-        jobTitle: row.jobTitle,
-        jobUrl: row.jobUrl,
-        outcome: "FAILED",
-        durationMs: Date.now() - start,
-        error: `Resume export failed: ${errMsg}`,
-        llmFallbackEnabled: !!anthropicKey,
+        rowIndex: row.rowIndex, company: row.company, jobTitle: row.jobTitle,
+        jobUrl: row.jobUrl, outcome: "FAILED", durationMs: Date.now() - start,
+        error: `Resume export failed: ${errMsg}`, llmFallbackEnabled: !!anthropicKey,
       });
       continue;
     }
 
-    // 3b. Run application
     let appResult: ApplicationResult;
     try {
-      console.log(`[rerun]   Executing Greenhouse apply flow…`);
       appResult = await runGreenhouseApplication(
         {
           jobUrl: row.jobUrl,
-          firstName: row.firstName,
-          lastName: row.lastName,
-          email: row.email,
-          phone: row.phone,
+          firstName: candidate.firstName,
+          lastName: candidate.lastName,
+          email: candidate.email,
+          phone: candidate.phone,
           resumePath,
+          city: candidate.city,
+          state: candidate.state,
+          country: candidate.country,
         },
-        {
-          artifactDir: ARTIFACT_DIR,
-          quiet: false,
-        },
+        { artifactDir: ARTIFACT_DIR, quiet: false },
       );
     } catch (err) {
       appResult = {
-        outcome: "FAILED",
-        runId: "error",
-        verificationRequired: false,
+        outcome: "FAILED", runId: "error", verificationRequired: false,
         error: err instanceof Error ? err.message : String(err),
       };
     }
 
     const durationMs = Date.now() - start;
     const icon = appResult.outcome === "SUBMITTED" ? "✓"
-      : appResult.outcome === "VERIFICATION_REQUIRED" ? "⏳"
-      : "✗";
+      : appResult.outcome === "VERIFICATION_REQUIRED" ? "⏳" : "✗";
 
     console.log(`[rerun]   ${icon} ${appResult.outcome} (${(durationMs / 1000).toFixed(1)}s)`);
     if (appResult.error) console.log(`[rerun]   Error: ${appResult.error}`);
-    if (appResult.statesCompleted) {
-      console.log(`[rerun]   States completed: ${appResult.statesCompleted.join(" → ")}`);
-    }
-    if (appResult.finalState) {
-      console.log(`[rerun]   Final state: ${appResult.finalState}`);
-    }
+    if (appResult.statesCompleted) console.log(`[rerun]   States: ${appResult.statesCompleted.join(" → ")}`);
+    if (appResult.finalState) console.log(`[rerun]   Final state: ${appResult.finalState}`);
 
     results.push({
-      rowIndex: row.rowIndex,
-      company: row.company,
-      jobTitle: row.jobTitle,
-      jobUrl: row.jobUrl,
-      outcome: appResult.outcome,
-      durationMs,
-      error: appResult.error,
-      statesCompleted: appResult.statesCompleted,
-      finalState: appResult.finalState,
-      llmFallbackEnabled: !!anthropicKey,
+      rowIndex: row.rowIndex, company: row.company, jobTitle: row.jobTitle,
+      jobUrl: row.jobUrl, outcome: appResult.outcome, durationMs,
+      error: appResult.error, statesCompleted: appResult.statesCompleted,
+      finalState: appResult.finalState, llmFallbackEnabled: !!anthropicKey,
     });
 
-    // 3c. Write result back to sheet
     try {
       const statusMap: Record<string, "Applied" | "Failed" | "Skipped" | "Verification Required"> = {
-        SUBMITTED: "Applied",
-        VERIFICATION_REQUIRED: "Verification Required",
-        FAILED: "Failed",
+        SUBMITTED: "Applied", VERIFICATION_REQUIRED: "Verification Required", FAILED: "Failed",
       };
       await writeRowResult(
         { spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME },
-        {
-          rowIndex: row.rowIndex,
-          status: statusMap[appResult.outcome] ?? "Failed",
-          runId: appResult.runId,
-          outcome: appResult.outcome,
-          error: appResult.error,
-          completedAt: new Date().toISOString(),
-        },
+        { rowIndex: row.rowIndex, status: statusMap[appResult.outcome] ?? "Failed",
+          runId: appResult.runId, outcome: appResult.outcome, error: appResult.error,
+          completedAt: new Date().toISOString() },
       );
-      console.log(`[rerun]   Sheet writeback: OK (row ${row.rowIndex})`);
+      console.log(`[rerun]   Sheet writeback: OK`);
     } catch (err) {
-      console.log(`[rerun]   Sheet writeback: FAILED (non-fatal) — ${err instanceof Error ? err.message : String(err)}`);
+      console.log(`[rerun]   Sheet writeback: FAILED (non-fatal)`);
     }
   }
 
-  // 4. Summary
   console.log("\n=== Rerun Summary ===\n");
+  console.log(`Candidate: ${candidate.firstName} ${candidate.lastName} | Phone: ${candidate.phone}`);
   console.log(`LLM fallback: ${anthropicKey ? "ENABLED" : "DISABLED"}`);
-  console.log(`Total runs: ${results.length}`);
-  console.log(`Submitted: ${results.filter(r => r.outcome === "SUBMITTED").length}`);
-  console.log(`Verification: ${results.filter(r => r.outcome === "VERIFICATION_REQUIRED").length}`);
-  console.log(`Failed: ${results.filter(r => r.outcome === "FAILED").length}`);
-  console.log();
-
+  console.log(`Total: ${results.length} | Submitted: ${results.filter(r => r.outcome === "SUBMITTED").length} | Verification: ${results.filter(r => r.outcome === "VERIFICATION_REQUIRED").length} | Failed: ${results.filter(r => r.outcome === "FAILED").length}`);
   for (const r of results) {
-    console.log(`  Row ${r.rowIndex} (${r.company}): ${r.outcome}`);
-    if (r.statesCompleted) {
-      console.log(`    States: ${r.statesCompleted.join(" → ")}`);
-    }
+    console.log(`\n  Row ${r.rowIndex} (${r.company}): ${r.outcome}`);
+    if (r.statesCompleted) console.log(`    States: ${r.statesCompleted.join(" → ")}`);
     if (r.finalState) console.log(`    Final state: ${r.finalState}`);
     if (r.error) console.log(`    Error: ${r.error}`);
   }
 
-  // 5. Save results
   const outputPath = resolve(ARTIFACT_DIR, "rerun-wavelo-smithrx-results.json");
   mkdirSync(resolve(ARTIFACT_DIR), { recursive: true });
   writeFileSync(outputPath, JSON.stringify(results, null, 2));

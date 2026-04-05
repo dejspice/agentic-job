@@ -248,6 +248,8 @@ export interface ApplicationInput {
   email: string;
   phone?: string;
   resumePath: string;
+  city?: string;
+  state?: string;
   country?: string;
   location?: string;
 }
@@ -292,8 +294,9 @@ export async function runGreenhouseApplication(
       lastName: input.lastName,
       email: input.email,
       phone: input.phone,
-      country: input.country ?? "United States",
-      location: input.location ?? "United States",
+      country: input.country,
+      location: input.location,
+      state: input.state,
     },
     provider,
     headless,
