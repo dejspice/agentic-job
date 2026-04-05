@@ -158,10 +158,27 @@ async function fillLocationAutocomplete(
     }
   }
 
-  // No suggestions appeared — press ArrowDown + Enter as a commit fallback.
-  // Some location fields accept typed-in values without a suggestion click.
   if (!optionFound) {
-    await execute({ type: "TYPE", selector, value: "\n", sequential: true });
+    // No suggestions appeared. Retry with the full "City, State" value —
+    // some Greenhouse location fields have a different search backend
+    // that works better with the complete string.
+    await execute({ type: "TYPE", selector, value: "", clearFirst: true });
+    await execute({ type: "TYPE", selector, value: value, sequential: true });
+
+    // Wait one more time for async suggestions
+    for (const optSel of OPTION_SELECTORS) {
+      const retryWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 5000 });
+      if (retryWait.success) {
+        const firstOpt = `#react-select-${fieldId}-option-0`;
+        const firstExists = await execute({ type: "WAIT_FOR", target: firstOpt, timeoutMs: 1000 });
+        if (firstExists.success) {
+          await execute({ type: "CLICK", target: { kind: "css", value: firstOpt } });
+          return true;
+        }
+        await execute({ type: "CLICK", target: { kind: "css", value: optSel } });
+        return true;
+      }
+    }
   }
 
   return optionFound;
