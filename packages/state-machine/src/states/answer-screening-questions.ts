@@ -67,7 +67,7 @@ async function readVisibleOptions(
  * This replaces the old approach of typing a search seed first, which failed
  * when the seed didn't match any option text (e.g. "Tex" for options ["TX"]).
  */
-async function fillReactSelect(
+export async function fillReactSelect(
   execute: CommandExecutor,
   selector: string,
   desiredValue: string,
