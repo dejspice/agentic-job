@@ -14,7 +14,10 @@
     "test:harness": "node --require tsx/cjs --test src/__tests__/harness/greenhouse-live-skip.test.ts",
     "test:all": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/apply-workflow.test.ts src/__tests__/integration/review-flow.integration.test.ts",
     "typecheck:test": "tsc --project tsconfig.test.json",
-    "harness:greenhouse-live": "node --require tsx/cjs src/harness/greenhouse-live-harness.ts"
+    "harness:greenhouse-live": "node --require tsx/cjs src/harness/greenhouse-live-harness.ts",
+    "demo": "node --require tsx/cjs src/demo/run-demo.ts",
+    "demo:run": "node --require tsx/cjs src/demo/run-demo.ts demo-input.json",
+    "demo:google": "DEMO_SOURCE=google GOOGLE_SHEET_ID=1-uOsL9Z6F22lrHaPk30vU-7HmXh2Y9nP6iCNXlovb08 node --require tsx/cjs src/demo/run-demo.ts"
   },
   "dependencies": {
     "@dejsol/browser-worker": "*",
@@ -23,6 +26,8 @@
     "@dejsol/state-machine": "*",
     "@temporalio/activity": "^1.15.0",
     "@temporalio/workflow": "^1.15.0",
+    "google-auth-library": "^10.6.2",
+    "googleapis": "^171.4.0",
     "playwright": "^1.49.0"
   }
 }

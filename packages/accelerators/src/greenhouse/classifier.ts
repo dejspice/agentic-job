@@ -114,6 +114,7 @@ export const greenhouseClassifiers: PageClassifier[] = [
   {
     name: "confirmation",
     selectors: [
+      ".confirmation",
       ".application-confirmation",
       "#application_confirmation",
       ".flash-success",
@@ -128,6 +129,8 @@ export const greenhouseClassifiers: PageClassifier[] = [
     textPatterns: [
       "Application submitted",
       "Thank you for applying",
+      "Thank you for your interest",
+      "Thank you for considering",
       "Your application has been submitted",
       "Thank you for your application",
       "Your application has been received",

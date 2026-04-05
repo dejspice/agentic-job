@@ -73,8 +73,8 @@ const GREENHOUSE_BROWSER_STATES: ReadonlyArray<StateName> = [
   // Resume upload moved AFTER field fills — React Select combobox interactions
   // (e.g. Location) trigger re-renders that clear the file upload widget.
   StateName.UPLOAD_RESUME,
-  StateName.ANSWER_SCREENING_QUESTIONS, // no-op — answer bank integration is a later phase
-  StateName.REVIEW_DISCLOSURES,         // no-op — EEOC/disclosure automation is a later phase
+  StateName.ANSWER_SCREENING_QUESTIONS,
+  StateName.REVIEW_DISCLOSURES,
   StateName.PRE_SUBMIT_CHECK,
   StateName.SUBMIT,
   StateName.CAPTURE_CONFIRMATION,
