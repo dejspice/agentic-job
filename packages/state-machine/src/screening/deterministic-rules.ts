@@ -101,7 +101,7 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     pattern: /^country$/i,
     answer: { kind: "dataKey", path: "candidate.country", fallback: "United States" },
     interaction: "react-select",
-    searchSeed: "",
+    searchSeed: "US",
   },
   {
     name: "zip_code",
