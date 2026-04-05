@@ -14,7 +14,7 @@
     "db:push": "prisma db push",
     "db:seed": "tsx scripts/seed-db.ts",
     "build": "tsc -b",
-    "clean": "rm -rf packages/*/dist *.tsbuildinfo",
+    "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo *.tsbuildinfo",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

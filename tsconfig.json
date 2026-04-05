@@ -1,20 +1,16 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "composite": true,
-    "outDir": "dist",
-    "rootDir": "src"
-  },
-  "exclude": ["node_modules", "dist"]
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/drive-connector" },
+    { "path": "packages/job-intake" },
+    { "path": "packages/strategy-engine" },
+    { "path": "packages/state-machine" },
+    { "path": "packages/browser-broker" },
+    { "path": "packages/browser-worker" },
+    { "path": "packages/accelerators" },
+    { "path": "packages/intelligence" },
+    { "path": "packages/workflows" },
+    { "path": "packages/api" }
+  ]
 }
