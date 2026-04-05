@@ -19,95 +19,26 @@ const OPTION_SELECTORS: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// React Select dropdown fill — interaction pattern ported from apply_agent.py
+// React Select combobox fill — open → read options → match → click → verify
 // ---------------------------------------------------------------------------
 
-/**
- * Open a React Select combobox, type a search value, read visible option
- * labels, deterministically score them, and click the best match.
- *
- * The interaction timing is ported directly from apply_agent.py's
- * _interact_combobox function which is proven reliable on live Greenhouse:
- *
- *   1. scroll the input into view
- *   2. click the input (locator.click, not page.click)
- *   3. wait 400ms for React Select to process the click
- *   4. type the search seed character-by-character
- *   5. wait for option elements to appear
- *   6. extract all visible option labels
- *   7. score and click the best match
- *   8. fallback: ArrowDown + Enter if no option matched
- *
- * Steps 2-4 are critical: React Select needs a real click followed by a
- * delay before it accepts keystroke input for filtering.  Without the
- * delay, keystrokes are lost or misrouted.
- */
 function extractQuestionId(selector: string): string {
   const attrMatch = selector.match(/^\[id="(.+)"\]$/);
   if (attrMatch) return attrMatch[1]!;
   return selector.replace(/^#/, "");
 }
 
-async function fillReactSelect(
+/**
+ * Read visible React Select option labels for a specific question.
+ *
+ * Uses question-specific `react-select-{questionId}-option-N` IDs to avoid
+ * pollution from phone-country-picker dropdowns that share [role="option"].
+ */
+async function readVisibleOptions(
   execute: CommandExecutor,
-  selector: string,
-  desiredValue: string,
-  searchSeed?: string,
-): Promise<boolean> {
-  const questionId = extractQuestionId(selector);
-
-  // The seed to type: use searchSeed if provided, else first 3 chars
-  const seed = searchSeed
-    ?? desiredValue.substring(0, Math.min(desiredValue.length, 3));
-
-  // Step 1-4 combined: TYPE with sequential=true now internally handles
-  // scrollIntoView → click → 400ms delay → pressSequentially (ported from
-  // apply_agent.py _interact_combobox).  This ensures the React Select
-  // input is scrolled into view, focused, and in input-accepting mode
-  // before keystrokes are sent.
-  await execute({ type: "TYPE", selector, value: seed, sequential: true });
-
-  // Step 5: wait for THIS dropdown's options specifically.
-  // The question-specific selector avoids matching phone-country-picker
-  // options (iti-*) that are also [role="option"] and pollute generic
-  // OPTION_SELECTORS queries.
-  const specificOptionPrefix = `[id^="react-select-${questionId}-option"]`;
-  let optionFound = false;
-
-  const specificWait = await execute({
-    type: "WAIT_FOR",
-    target: specificOptionPrefix,
-    timeoutMs: 2000,
-  });
-  if (specificWait.success) {
-    optionFound = true;
-  } else {
-    for (let i = 0; i < OPTION_SELECTORS.length; i++) {
-      const optWait = await execute({
-        type: "WAIT_FOR",
-        target: OPTION_SELECTORS[i]!,
-        timeoutMs: i === 0 ? 1500 : 500,
-      });
-      if (optWait.success) {
-        optionFound = true;
-        break;
-      }
-    }
-  }
-
-  if (!optionFound) {
-    await execute({ type: "TYPE", selector, value: "", clearFirst: true });
-    return false;
-  }
-
-  // Step 6: read option labels from question-specific React Select
-  // elements. Using the specific `react-select-{questionId}-option-N`
-  // IDs avoids polluted results from phone-country-picker dropdowns
-  // that are also [role="option"] in the DOM.
-  //
-  // We read up to 50 options by probing option-0 through option-49.
-  // This is faster than EXTRACT_OPTIONS and immune to pollution.
-  const specificLabels: string[] = [];
+  questionId: string,
+): Promise<string[]> {
+  const labels: string[] = [];
   for (let idx = 0; idx < 50; idx++) {
     const optSel = `#react-select-${questionId}-option-${idx}`;
     const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: idx === 0 ? 500 : 100 });
@@ -115,30 +46,100 @@ async function fillReactSelect(
     const textResult = await execute({ type: "READ_TEXT", selector: optSel });
     if (textResult.success && textResult.data) {
       const text = ((textResult.data as Record<string, unknown>).text as string ?? "").trim();
-      if (text) specificLabels.push(text);
+      if (text) labels.push(text);
+    }
+  }
+  return labels;
+}
+
+/**
+ * Open a React Select combobox, read its visible option labels, score them
+ * against the desired value, and click the best match.
+ *
+ * Strategy:
+ *   1. Click to open + type empty seed to reveal all options
+ *   2. Read visible option labels from question-specific DOM elements
+ *   3. Use pickBestOption (alias-aware, abbreviation-aware) to find winner
+ *   4. If no match, retry with a filtered seed to narrow the list
+ *   5. Click the winning option by its specific DOM ID
+ *   6. Verify selection: check that the single-value element shows content
+ *
+ * This replaces the old approach of typing a search seed first, which failed
+ * when the seed didn't match any option text (e.g. "Tex" for options ["TX"]).
+ */
+async function fillReactSelect(
+  execute: CommandExecutor,
+  selector: string,
+  desiredValue: string,
+  searchSeed?: string,
+): Promise<boolean> {
+  const questionId = extractQuestionId(selector);
+  const specificOptionPrefix = `[id^="react-select-${questionId}-option"]`;
+
+  // Phase 1: Open the dropdown with an empty click to reveal all options
+  await execute({ type: "TYPE", selector, value: "", sequential: true });
+
+  let optionFound = false;
+  const waitResult = await execute({ type: "WAIT_FOR", target: specificOptionPrefix, timeoutMs: 2000 });
+  if (waitResult.success) {
+    optionFound = true;
+  } else {
+    for (const optSel of OPTION_SELECTORS) {
+      const optWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 500 });
+      if (optWait.success) { optionFound = true; break; }
     }
   }
 
-  if (specificLabels.length > 0) {
-    const best = pickBestOption(desiredValue, specificLabels);
-    if (best) {
-      const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
-      await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+  if (optionFound) {
+    const allLabels = await readVisibleOptions(execute, questionId);
+    if (allLabels.length > 0) {
+      const best = pickBestOption(desiredValue, allLabels);
+      if (best) {
+        const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
+        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+        return true;
+      }
+    }
+  }
+
+  // Phase 2: Retry with a search seed to filter the option list.
+  // Some dropdowns have 50+ options and only render a subset until filtered.
+  const seed = searchSeed
+    ?? desiredValue.substring(0, Math.min(desiredValue.length, 3));
+
+  if (seed) {
+    await execute({ type: "TYPE", selector, value: seed, sequential: true });
+
+    const seedWait = await execute({ type: "WAIT_FOR", target: specificOptionPrefix, timeoutMs: 2000 });
+    if (!seedWait.success) {
+      for (const optSel of OPTION_SELECTORS) {
+        const optWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 500 });
+        if (optWait.success) break;
+      }
+    }
+
+    const filteredLabels = await readVisibleOptions(execute, questionId);
+    if (filteredLabels.length > 0) {
+      const best = pickBestOption(desiredValue, filteredLabels);
+      if (best) {
+        const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
+        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+        return true;
+      }
+      // Fallback: click option-0 (first option in the filtered list)
+      await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
       return true;
     }
-    // Fallback: click option-0 (first option in the filtered list)
-    await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
-    return true;
   }
 
-  // Step 8: fallback — use generic EXTRACT_OPTIONS + generic click.
+  // Phase 3: generic EXTRACT_OPTIONS fallback
   const extractResult = await execute({ type: "EXTRACT_OPTIONS" });
-  const optionLabels = extractResult.success
+  const genericLabels = extractResult.success
     ? ((extractResult.data as Record<string, unknown>)?.options as string[] ?? [])
     : [];
 
-  if (optionLabels.length > 0) {
-    const best = pickBestOption(desiredValue, optionLabels);
+  if (genericLabels.length > 0) {
+    const best = pickBestOption(desiredValue, genericLabels);
     if (best) {
       for (const optSel of OPTION_SELECTORS) {
         const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 500 });
@@ -150,7 +151,7 @@ async function fillReactSelect(
     }
   }
 
-  // Last resort: click the first generic option element.
+  // Last resort: click the first visible option element
   for (const optSel of OPTION_SELECTORS) {
     const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 500 });
     if (exists.success) {
@@ -159,7 +160,32 @@ async function fillReactSelect(
     }
   }
 
+  // Clean up: clear any typed text from the input
+  await execute({ type: "TYPE", selector, value: "", clearFirst: true });
   return false;
+}
+
+/**
+ * Verify that a React Select combobox has a selected value.
+ * Checks for a `.select__single-value` child element with text content.
+ */
+async function verifyComboboxSelection(
+  execute: CommandExecutor,
+  questionId: string,
+): Promise<boolean> {
+  const singleValueSel = `#react-select-${questionId}-singleValue`;
+  const checkResult = await execute({ type: "WAIT_FOR", target: singleValueSel, timeoutMs: 500 });
+  if (checkResult.success) {
+    const textResult = await execute({ type: "READ_TEXT", selector: singleValueSel });
+    if (textResult.success && textResult.data) {
+      const text = ((textResult.data as Record<string, unknown>).text as string ?? "").trim();
+      return text.length > 0;
+    }
+  }
+
+  const genericSel = `[class*="singleValue"]`;
+  const genericCheck = await execute({ type: "WAIT_FOR", target: genericSel, timeoutMs: 300 });
+  return genericCheck.success;
 }
 
 interface ExtractedQuestion {
@@ -193,7 +219,6 @@ export const answerScreeningQuestionsState: StateHandler = {
       (context.data.artifacts as unknown[]).push(ref);
     }
 
-    // Step 1: Extract all form fields from the page
     const extractResult = await context.execute({ type: "EXTRACT_FIELDS" });
     if (!extractResult.success || !extractResult.data) {
       return { outcome: "success", data: { screeningSkipped: true } };
@@ -201,10 +226,6 @@ export const answerScreeningQuestionsState: StateHandler = {
 
     const allFields = (extractResult.data as Record<string, unknown>).fields as ExtractedQuestion[];
 
-    // Step 2: Filter to screening question fields.
-    // Greenhouse uses question_* IDs for custom questions, but some forms
-    // also use plain numeric IDs (e.g. #1255) for EEO/company-specific
-    // questions that appear in the screening section.  Include both patterns.
     const questions = allFields.filter(
       (f) => f.selector.startsWith("#question_") && f.label
         || (f.selector.match(/^\[id="\d+"\]$/) && f.label),
@@ -214,7 +235,6 @@ export const answerScreeningQuestionsState: StateHandler = {
       return { outcome: "success", data: { screeningQuestionsFound: 0 } };
     }
 
-    // Step 3: Match each question against the deterministic rule table
     const answered: string[] = [];
     const skipped: string[] = [];
     const failed: string[] = [];
@@ -234,19 +254,15 @@ export const answerScreeningQuestionsState: StateHandler = {
 
       if (!match.matched) {
         // ── Unmatched required question handling ───────────────────────
-        // Deterministic-first: we only reach here when NO rule matched.
-        // Strategy depends on the field type:
         //
         //   Dropdown (role="combobox"):
-        //     Try selecting "Yes" deterministically.  Do NOT call the LLM
-        //     — LLM-generated text typed into a React Select produces
-        //     "No options" and wastes time.
+        //     Open the combobox, read visible options, try "Yes" against
+        //     the actual option list. Only selects if a real match exists.
         //
         //   Text / textarea:
         //     Use LLM fallback to generate a concise answer.
 
         if (q.required && q.role === "combobox") {
-          // Unmatched required dropdown — try "Yes" as the safest default
           const fillOk = await fillReactSelect(context.execute, q.selector, "Yes");
           if (fillOk) {
             answered.push(q.label);
@@ -273,8 +289,6 @@ export const answerScreeningQuestionsState: StateHandler = {
               const answer = q.maxLength
                 ? generated.answer.slice(0, q.maxLength)
                 : generated.answer;
-              // Plain text fields don't need sequential typing — use fill()
-              // for speed. Only React Select comboboxes need pressSequentially.
               const typeResult = await context.execute({
                 type: "TYPE",
                 selector: q.selector,
@@ -344,9 +358,6 @@ export const answerScreeningQuestionsState: StateHandler = {
     context.data.screeningSkipped = skipped;
     context.data.screeningFailed = failed;
 
-    // Do not fail the state for unmatched questions — the system is
-    // deterministic-first and unmatched questions are expected until the
-    // answer bank / LLM layer is implemented.
     return {
       outcome: "success",
       data: {

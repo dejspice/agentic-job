@@ -375,6 +375,32 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     interaction: "text",
   },
 
+  // ── System architecture expertise ────────────────────────────────────
+  {
+    name: "system_architecture_expertise",
+    pattern: /expertise\s*in\s*system\s*architecture|system\s*architecture.*scalability|design\s*for\s*scalability.*reliability/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Dependent freeform: "describe your ML work" ────────────────────
+  // Must come BEFORE the generic ML experience rule — "describe your work
+  // with Machine Learning" is a freeform textarea, not a Yes/No combobox.
+  {
+    name: "describe_ml_work",
+    pattern: /describe\s*your\s*work\s*with\s*machine\s*learning|describe.*machine\s*learning.*production|please\s*describe.*machine\s*learning/i,
+    answer: { kind: "dataKey", path: "candidate.mlExperience", fallback: "I have applied machine learning models for predictive analytics, feature engineering, and data pipeline optimization in production SaaS environments." },
+    interaction: "text",
+  },
+
+  // ── Machine Learning experience ────────────────────────────────────
+  {
+    name: "machine_learning_experience",
+    pattern: /experience\s*with\s*machine\s*learning|machine\s*learning\s*concepts/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
   // ── Generic "do you have experience with/in X" ─────────────────────
   // Catches patterns like "Do you have experience deploying...",
   // "Do you have experience with Kubernetes?", etc.
