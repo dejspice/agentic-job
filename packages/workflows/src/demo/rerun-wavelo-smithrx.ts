@@ -132,6 +132,7 @@ async function main(): Promise<void> {
           city: candidate.city,
           state: candidate.state,
           country: candidate.country,
+          location: `${candidate.city}, ${candidate.state}`,
         },
         { artifactDir: ARTIFACT_DIR, quiet: false },
       );

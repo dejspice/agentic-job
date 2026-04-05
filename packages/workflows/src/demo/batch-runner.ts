@@ -275,6 +275,9 @@ export async function runGoogleBatch(
     }
 
     const profile = options.candidateProfile;
+    const location = profile?.city && profile?.state
+      ? `${profile.city}, ${profile.state}`
+      : profile?.city ?? profile?.state;
 
     let appResult: ApplicationResult;
     try {
@@ -289,6 +292,7 @@ export async function runGoogleBatch(
           city: profile?.city,
           state: profile?.state,
           country: profile?.country,
+          location,
         },
         {
           artifactDir,
