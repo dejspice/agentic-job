@@ -107,6 +107,34 @@ export async function fillReactSelect(
       await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
       return true;
     }
+
+    // Seed produced zero results — clear and retry with no filter to
+    // reveal the full option list. This handles cases where the search
+    // seed doesn't match any option text (e.g. seed "Tech" on a dropdown
+    // whose options are "Drug Therapies", "Medical Devices", "Pharmacy Benefits").
+    await execute({ type: "TYPE", selector, value: "", clearFirst: true });
+    await execute({ type: "TYPE", selector, value: " ", sequential: true });
+    await execute({ type: "TYPE", selector, value: "", clearFirst: true });
+
+    const retryWait = await execute({ type: "WAIT_FOR", target: specificOptionPrefix, timeoutMs: 2500 });
+    if (!retryWait.success) {
+      for (const optSel of OPTION_SELECTORS) {
+        const optWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 500 });
+        if (optWait.success) break;
+      }
+    }
+
+    const allLabels = await readVisibleOptions(execute, questionId);
+    if (allLabels.length > 0) {
+      const best = pickBestOption(desiredValue, allLabels);
+      if (best) {
+        const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
+        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+        return true;
+      }
+      await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
+      return true;
+    }
   }
 
   // Phase 3: generic EXTRACT_OPTIONS fallback
