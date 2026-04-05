@@ -14,14 +14,18 @@
     "test:harness": "node --require tsx/cjs --test src/__tests__/harness/greenhouse-live-skip.test.ts",
     "test:all": "node --require tsx/cjs --require ./src/__tests__/helpers/temporal-mock.ts --test src/__tests__/apply-workflow.test.ts src/__tests__/integration/review-flow.integration.test.ts",
     "typecheck:test": "tsc --project tsconfig.test.json",
-    "harness:greenhouse-live": "node --require tsx/cjs src/harness/greenhouse-live-harness.ts"
+    "harness:greenhouse-live": "node --require tsx/cjs src/harness/greenhouse-live-harness.ts",
+    "demo": "node --require tsx/cjs src/demo/run-demo.ts"
   },
   "dependencies": {
     "@dejsol/browser-worker": "*",
     "@dejsol/core": "*",
+    "@dejsol/drive-connector": "*",
     "@dejsol/state-machine": "*",
     "@temporalio/activity": "^1.15.0",
     "@temporalio/workflow": "^1.15.0",
+    "google-auth-library": "^9.0.0",
+    "googleapis": "^144.0.0",
     "playwright": "^1.49.0"
   }
 }

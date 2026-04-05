@@ -283,6 +283,134 @@ export async function runLiveHarness(config: HarnessConfig): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Programmatic entry point — called by batch-runner
+// ---------------------------------------------------------------------------
+
+export interface ApplicationInput {
+  jobUrl: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  /** Local PDF path (from Drive converter). */
+  resumePath: string;
+  /** Browser provider override. Defaults to LOCAL. */
+  provider?: RuntimeProvider;
+  /** Artifact output directory. Defaults to ./artifacts-batch. */
+  artifactDir?: string;
+}
+
+export interface ApplicationResult {
+  outcome: "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED";
+  runId: string;
+  verificationRequired: boolean;
+  confirmationUrl?: string;
+  artifactPath?: string;
+  error?: string;
+}
+
+/**
+ * Programmatic entry point for running a single Greenhouse application.
+ * Called by the batch runner — does not read env vars or call process.exit.
+ */
+export async function runGreenhouseApplication(
+  input: ApplicationInput,
+): Promise<ApplicationResult> {
+  const runId = randomUUID();
+  const artifactDir = resolve(input.artifactDir ?? "./artifacts-batch");
+
+  const config: HarnessConfig = {
+    targetUrl: input.jobUrl,
+    resumePath: resolve(input.resumePath),
+    candidate: {
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email: input.email,
+      phone: input.phone,
+    },
+    provider: input.provider ?? RuntimeProvider.LOCAL,
+    headless: true,
+    artifactDir,
+    runId,
+  };
+
+  const broker = new BrowserBroker();
+  const requirements: SessionRequirements = {
+    provider: config.provider,
+    headless: config.headless,
+  };
+  let session: AllocatedSession | undefined;
+
+  try {
+    session = await broker.allocateSession(requirements);
+    const store = new LocalFileArtifactStore(artifactDir);
+
+    const data: Record<string, unknown> = {
+      resumeFile: config.resumePath,
+      candidate: {
+        firstName: config.candidate.firstName,
+        lastName: config.candidate.lastName,
+        email: config.candidate.email,
+        ...(config.candidate.phone ? { phone: config.candidate.phone } : {}),
+      },
+    };
+
+    const result = await executeGreenhouseHappyPath({
+      page: session.page,
+      store,
+      runId,
+      jobId: `batch-job-${runId.slice(0, 8)}`,
+      candidateId: `batch-cand-${runId.slice(0, 8)}`,
+      jobUrl: config.targetUrl,
+      data,
+    });
+
+    if (result.outcome === "success") {
+      return {
+        outcome: "SUBMITTED",
+        runId,
+        verificationRequired: false,
+        confirmationUrl: result.confirmationId,
+        artifactPath: `${artifactDir}/${runId}`,
+      };
+    }
+
+    if (result.outcome === "escalated") {
+      return {
+        outcome: "VERIFICATION_REQUIRED",
+        runId,
+        verificationRequired: true,
+        artifactPath: `${artifactDir}/${runId}`,
+        error: result.error,
+      };
+    }
+
+    return {
+      outcome: "FAILED",
+      runId,
+      verificationRequired: false,
+      artifactPath: `${artifactDir}/${runId}`,
+      error: result.error,
+    };
+  } catch (err) {
+    return {
+      outcome: "FAILED",
+      runId,
+      verificationRequired: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    if (session) {
+      try {
+        await broker.releaseSession(session);
+      } catch {
+        // Best-effort release
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main — auto-executes when this file is the entry point
 // ---------------------------------------------------------------------------
 
