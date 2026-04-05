@@ -76,7 +76,12 @@ async function fillReactSelect(
   const questionId = extractQuestionId(selector);
   const specificOptionPrefix = `[id^="react-select-${questionId}-option"]`;
 
-  // Phase 1: Open the dropdown with an empty click to reveal all options
+  // Dismiss any prior open dropdown by clicking the page body first.
+  // Sequential combobox fills can leave the previous dropdown open, which
+  // steals focus and prevents the next combobox from opening.
+  await execute({ type: "CLICK", target: { kind: "css", value: "body" } });
+
+  // Phase 1: Open the dropdown with a focused click to reveal all options
   await execute({ type: "TYPE", selector, value: "", sequential: true });
 
   let optionFound = false;
