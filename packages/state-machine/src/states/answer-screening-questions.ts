@@ -67,51 +67,90 @@ async function fillReactSelect(
   // before keystrokes are sent.
   await execute({ type: "TYPE", selector, value: seed, sequential: true });
 
-  // Step 5: wait for option elements to appear.  The primary selector
-  // [id*='-option-'] gets a generous timeout; fallbacks are short since
-  // if React Select rendered options, they'd match the first selector.
+  // Step 5: wait for THIS dropdown's options specifically.
+  // The question-specific selector avoids matching phone-country-picker
+  // options (iti-*) that are also [role="option"] and pollute generic
+  // OPTION_SELECTORS queries.
+  const specificOptionPrefix = `[id^="react-select-${questionId}-option"]`;
   let optionFound = false;
-  for (let i = 0; i < OPTION_SELECTORS.length; i++) {
-    const optWait = await execute({
-      type: "WAIT_FOR",
-      target: OPTION_SELECTORS[i]!,
-      timeoutMs: i === 0 ? 1500 : 500,
-    });
-    if (optWait.success) {
-      optionFound = true;
-      break;
+
+  const specificWait = await execute({
+    type: "WAIT_FOR",
+    target: specificOptionPrefix,
+    timeoutMs: 2000,
+  });
+  if (specificWait.success) {
+    optionFound = true;
+  } else {
+    for (let i = 0; i < OPTION_SELECTORS.length; i++) {
+      const optWait = await execute({
+        type: "WAIT_FOR",
+        target: OPTION_SELECTORS[i]!,
+        timeoutMs: i === 0 ? 1500 : 500,
+      });
+      if (optWait.success) {
+        optionFound = true;
+        break;
+      }
     }
   }
 
   if (!optionFound) {
-    // No options appeared — try ArrowDown + Enter as last resort
-    // (matches apply_agent.py fallback lines 283-286).
     await execute({ type: "TYPE", selector, value: "", clearFirst: true });
     return false;
   }
 
-  // Step 6: extract ALL visible option labels in one browser round-trip.
+  // Step 6: read option labels from question-specific React Select
+  // elements. Using the specific `react-select-{questionId}-option-N`
+  // IDs avoids polluted results from phone-country-picker dropdowns
+  // that are also [role="option"] in the DOM.
+  //
+  // We read up to 50 options by probing option-0 through option-49.
+  // This is faster than EXTRACT_OPTIONS and immune to pollution.
+  const specificLabels: string[] = [];
+  for (let idx = 0; idx < 50; idx++) {
+    const optSel = `#react-select-${questionId}-option-${idx}`;
+    const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: idx === 0 ? 500 : 100 });
+    if (!exists.success) break;
+    const textResult = await execute({ type: "READ_TEXT", selector: optSel });
+    if (textResult.success && textResult.data) {
+      const text = ((textResult.data as Record<string, unknown>).text as string ?? "").trim();
+      if (text) specificLabels.push(text);
+    }
+  }
+
+  if (specificLabels.length > 0) {
+    const best = pickBestOption(desiredValue, specificLabels);
+    if (best) {
+      const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
+      await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+      return true;
+    }
+    // Fallback: click option-0 (first option in the filtered list)
+    await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
+    return true;
+  }
+
+  // Step 8: fallback — use generic EXTRACT_OPTIONS + generic click.
   const extractResult = await execute({ type: "EXTRACT_OPTIONS" });
   const optionLabels = extractResult.success
     ? ((extractResult.data as Record<string, unknown>)?.options as string[] ?? [])
     : [];
 
   if (optionLabels.length > 0) {
-    // Step 7: deterministic scoring via the option matcher.
     const best = pickBestOption(desiredValue, optionLabels);
-
     if (best) {
-      // Click by the exact React Select option ID for this dropdown.
-      const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
-      const exists = await execute({ type: "WAIT_FOR", target: winnerSelector, timeoutMs: 500 });
-      if (exists.success) {
-        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
-        return true;
+      for (const optSel of OPTION_SELECTORS) {
+        const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 500 });
+        if (exists.success) {
+          await execute({ type: "CLICK", target: { kind: "css", value: optSel } });
+          return true;
+        }
       }
     }
   }
 
-  // Step 8: fallback — click the first visible option element.
+  // Last resort: click the first generic option element.
   for (const optSel of OPTION_SELECTORS) {
     const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 500 });
     if (exists.success) {
