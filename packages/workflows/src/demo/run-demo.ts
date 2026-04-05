@@ -54,14 +54,17 @@ function printProgress(
     result.outcome === "SUBMITTED"
       ? "✓"
       : result.outcome === "VERIFICATION_REQUIRED"
-        ? "⏳"
+        ? "✓"
         : result.outcome === "SKIPPED"
           ? "⊘"
           : "✗";
+  const displayOutcome = result.outcome === "VERIFICATION_REQUIRED"
+    ? "SUBMITTED (verify)"
+    : result.outcome;
   const duration = (result.durationMs / 1000).toFixed(1);
 
   console.log(
-    `[DEMO]  ${icon} [${completed}/${total}] ${result.candidate} — ${result.outcome} (${duration}s)`,
+    `[DEMO]  ${icon} [${completed}/${total}] ${result.candidate} — ${displayOutcome} (${duration}s)`,
   );
 }
 
@@ -70,7 +73,9 @@ function printSummary(summary: BatchSummary): void {
   console.log(`[DEMO] ${DIVIDER}`);
   console.log(`[DEMO]  Total jobs:    ${summary.totalJobs}`);
   console.log(`[DEMO]  Submitted:     ${summary.submitted}`);
-  console.log(`[DEMO]  Verification:  ${summary.verification}`);
+  if (summary.verification > 0) {
+    console.log(`[DEMO]  Submitted (verify): ${summary.verification}  ← form submitted, awaiting email code`);
+  }
   console.log(`[DEMO]  Failed:        ${summary.failed}`);
   if (summary.skipped > 0) {
     console.log(`[DEMO]  Skipped:       ${summary.skipped}`);
