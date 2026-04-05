@@ -18,6 +18,9 @@ const GREENHOUSE_APPLY_SELECTORS: readonly string[] = [
   // Greenhouse data-attribute embed pattern
   '[data-provides="job-application-form"]',
   '[data-job-apply="true"]',
+  // job-boards.greenhouse.io layout — pill button with aria-label
+  'button[aria-label="Apply"]',
+  'button[aria-label="Apply now"]',
   // Canonical and common class names
   ".btn-apply",
   ".apply-button",

@@ -144,7 +144,14 @@ async function runGoogleMode(): Promise<void> {
     process.exit(0);
   }
 
-  console.log(`[DEMO] Found ${rows.length} pending row(s). First 3:`);
+  const limit = parseInt(process.env["DEMO_LIMIT"] ?? "0", 10);
+  if (limit > 0 && rows.length > limit) {
+    console.log(`[DEMO] Found ${rows.length} pending row(s), limiting to ${limit} (DEMO_LIMIT).`);
+    rows = rows.slice(0, limit);
+  } else {
+    console.log(`[DEMO] Found ${rows.length} pending row(s).`);
+  }
+
   for (const r of rows.slice(0, 3)) {
     console.log(`[DEMO]   Row ${r.rowIndex}: ${r.company} — ${r.jobTitle} (${r.resumeId})`);
   }
