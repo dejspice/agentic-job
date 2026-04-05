@@ -28,9 +28,13 @@ export async function allocateLocalSession(
   requirements: SessionRequirements,
 ): Promise<AllocatedSession> {
   const headless = requirements.headless ?? true;
+  const executablePath =
+    process.env["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"] ||
+    process.env["CHROME_PATH"] ||
+    undefined;
 
   try {
-    const browser = await chromium.launch({ headless });
+    const browser = await chromium.launch({ headless, executablePath });
     const context = await browser.newContext();
     const page = await context.newPage();
 
