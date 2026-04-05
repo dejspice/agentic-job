@@ -17,7 +17,7 @@
     "harness:greenhouse-live": "node --require tsx/cjs src/harness/greenhouse-live-harness.ts",
     "demo": "node --require tsx/cjs src/demo/run-demo.ts",
     "demo:run": "node --require tsx/cjs src/demo/run-demo.ts demo-input.json",
-    "demo:google": "DEMO_SOURCE=google node --require tsx/cjs src/demo/run-demo.ts"
+    "demo:google": "DEMO_SOURCE=google GOOGLE_SHEET_ID=1-uOsL9Z6F22lrHaPk30vU-7HmXh2Y9nP6iCNXlovb08 node --require tsx/cjs src/demo/run-demo.ts"
   },
   "dependencies": {
     "@dejsol/browser-worker": "*",
