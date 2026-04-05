@@ -1,0 +1,26 @@
+[
+  {
+    "jobUrl": "https://boards.greenhouse.io/example/jobs/4000000001",
+    "firstName": "Alice",
+    "lastName": "Chen",
+    "email": "alice.chen@example.com",
+    "phone": "555-100-2000",
+    "resumePath": "./src/__tests__/fixtures/test-resume.txt"
+  },
+  {
+    "jobUrl": "https://boards.greenhouse.io/example/jobs/4000000002",
+    "firstName": "Bob",
+    "lastName": "Martinez",
+    "email": "bob.martinez@example.com",
+    "phone": "555-200-3000",
+    "resumePath": "./src/__tests__/fixtures/test-resume.txt"
+  },
+  {
+    "jobUrl": "https://boards.greenhouse.io/example/jobs/4000000003",
+    "firstName": "Carol",
+    "lastName": "Williams",
+    "email": "carol.williams@example.com",
+    "phone": "555-300-4000",
+    "resumePath": "./src/__tests__/fixtures/test-resume.txt"
+  }
+]

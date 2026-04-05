@@ -46,6 +46,8 @@ prisma/migrations/**/migration_lock.toml
 *.pdf
 session.json
 dejsol-capture/*.zip
+artifacts-live/
+artifacts-batch/
 
 # Logs
 *.log

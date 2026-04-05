@@ -28,6 +28,8 @@ const GREENHOUSE_APPLY_SELECTORS: readonly string[] = [
   "#app_submit",
   '[data-provides="job-application-form"]',
   '[data-job-apply="true"]',
+  'button[aria-label="Apply"]',
+  'button[aria-label="Apply now"]',
   ".btn-apply",
   ".apply-button",
   ".apply-now",

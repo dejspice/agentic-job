@@ -97,6 +97,7 @@ export interface HarnessConfig {
     lastName: string;
     email: string;
     phone?: string;
+    city?: string;
     country?: string;
     location?: string;
     linkedin?: string;
@@ -235,6 +236,160 @@ export function loadHarnessConfig(): HarnessConfig | null {
       process.env["VERIFICATION_CODE_TIMEOUT_MS"] ?? "900000", 10, // 15 minutes default
     ),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Programmatic invocation — batch-friendly entry point
+// ---------------------------------------------------------------------------
+
+export interface ApplicationInput {
+  jobUrl: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  resumePath: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  location?: string;
+}
+
+export interface ApplicationResult {
+  outcome: "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED";
+  runId: string;
+  verificationRequired: boolean;
+  error?: string;
+  finalState?: string;
+  statesCompleted?: string[];
+  artifactDir?: string;
+}
+
+/**
+ * Run a single Greenhouse application programmatically.
+ *
+ * This is the batch-friendly entry point — no env vars needed.
+ * Allocates a browser, executes the full happy path, releases the browser.
+ */
+export async function runGreenhouseApplication(
+  input: ApplicationInput,
+  options?: {
+    artifactDir?: string;
+    runId?: string;
+    provider?: RuntimeProvider;
+    headless?: boolean;
+    quiet?: boolean;
+  },
+): Promise<ApplicationResult> {
+  const runId = options?.runId ?? randomUUID();
+  const artifactDir = resolve(options?.artifactDir ?? "./artifacts-batch");
+  const provider = options?.provider ?? RuntimeProvider.LOCAL;
+  const headless = options?.headless ?? true;
+  const quiet = options?.quiet ?? false;
+
+  const config: HarnessConfig = {
+    targetUrl: input.jobUrl,
+    resumePath: resolve(input.resumePath),
+    candidate: {
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email: input.email,
+      phone: input.phone,
+      city: input.city,
+      country: input.country,
+      location: input.location,
+      state: input.state,
+    },
+    provider,
+    headless,
+    artifactDir,
+    runId,
+    slowMo: 0,
+    preSubmitDwellMs: 0,
+    maxRunMs: 300_000,
+    verificationCodeTimeoutMs: 0,
+  };
+
+  const broker = new BrowserBroker();
+  const requirements: SessionRequirements = { provider, headless, slowMo: 0 };
+  let session: AllocatedSession | undefined;
+
+  try {
+    session = await broker.allocateSession(requirements);
+    const store = new LocalFileArtifactStore(artifactDir);
+
+    const candidateBag: Record<string, string> = {
+      firstName: config.candidate.firstName,
+      lastName: config.candidate.lastName,
+      email: config.candidate.email,
+    };
+    for (const [k, v] of Object.entries(config.candidate)) {
+      if (v && !candidateBag[k]) candidateBag[k] = v;
+    }
+
+    const urlCompany = input.jobUrl.match(/greenhouse\.io\/([^/]+)/)?.[1] ?? undefined;
+
+    const anthropicKey = process.env["ANTHROPIC_API_KEY"]?.trim();
+    const answerGenerator = anthropicKey
+      ? createAnswerGenerator(createClaudeProvider(anthropicKey))
+      : createAnswerGenerator();
+
+    const data: Record<string, unknown> = {
+      resumeFile: config.resumePath,
+      candidate: candidateBag,
+      answerGenerator,
+      company: urlCompany,
+      jobTitle: undefined,
+    };
+
+    const result = await executeGreenhouseHappyPath({
+      page: session.page,
+      store,
+      runId,
+      jobId: `live-job-${runId.slice(0, 8)}`,
+      candidateId: `live-cand-${runId.slice(0, 8)}`,
+      jobUrl: input.jobUrl,
+      data,
+    });
+
+    const verificationRequired =
+      result.outcome === "success" &&
+      (result.data?.verificationRequired === true ||
+        result.finalState === "CAPTURE_CONFIRMATION" &&
+          !result.confirmationId);
+
+    let outcome: ApplicationResult["outcome"];
+    if (result.outcome === "success") {
+      outcome = verificationRequired ? "VERIFICATION_REQUIRED" : "SUBMITTED";
+    } else {
+      outcome = "FAILED";
+    }
+
+    return {
+      outcome,
+      runId,
+      verificationRequired,
+      finalState: String(result.finalState),
+      statesCompleted: result.statesCompleted.map(String),
+      artifactDir: `${artifactDir}/${runId}`,
+      ...(result.error ? { error: result.error } : {}),
+    };
+  } catch (err) {
+    return {
+      outcome: "FAILED",
+      runId,
+      verificationRequired: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    if (session) {
+      try {
+        await broker.releaseSession(session);
+      } catch {
+        // Swallow release errors
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

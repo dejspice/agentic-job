@@ -6,6 +6,7 @@ import type { StateHandler, StateContext, StateResult } from "../types.js";
  * common alternate patterns seen on live boards.
  */
 const CONFIRMATION_SELECTORS = [
+  ".confirmation",
   ".application-confirmation",
   "#application_confirmation",
   ".flash-success",

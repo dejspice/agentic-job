@@ -11,6 +11,7 @@ const GREENHOUSE_SUBMIT_SELECTORS =
  * alternate confirmation element names or flash notice patterns.
  */
 const CONFIRMATION_CSS_SELECTORS = [
+  ".confirmation",
   ".application-confirmation",
   "#application_confirmation",
   ".flash-success",
@@ -25,11 +26,13 @@ const CONFIRMATION_CSS_SELECTORS = [
 
 // Partial-text selectors (no quotes = substring match in Playwright)
 const CONFIRMATION_TEXT_SELECTORS = [
-  "text=Thank you for your interest",
   "text=Thank you for applying",
-  "text=application has been submitted",
-  "text=View more jobs at",
+  "text=Thank you for your interest",
+  "text=Thank you for considering",
   "text=Your application has been received",
+  "text=application has been submitted",
+  "text=We have received your application",
+  "text=View more jobs at",
 ];
 
 /**

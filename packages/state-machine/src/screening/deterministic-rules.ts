@@ -56,11 +56,73 @@ export type RuleMatchOutcome = MatchResult | NoMatchResult;
 // ---------------------------------------------------------------------------
 
 export const SCREENING_RULES: readonly ScreeningRule[] = [
+  // ── Personal-info duplicates (screening-section variants) ────────────
+  // Some boards (SmithRx) repeat name/address fields as screening questions.
+  {
+    name: "legal_first_name",
+    pattern: /^legal\s*first\s*name$|^first\s*name$/i,
+    answer: { kind: "dataKey", path: "candidate.firstName" },
+    interaction: "text",
+  },
+  {
+    name: "legal_last_name",
+    pattern: /^legal\s*last\s*name$|^last\s*name$/i,
+    answer: { kind: "dataKey", path: "candidate.lastName" },
+    interaction: "text",
+  },
+  {
+    name: "address_type",
+    pattern: /^address\s*type$/i,
+    answer: { kind: "literal", value: "Home" },
+    interaction: "react-select",
+    searchSeed: "Home",
+  },
+  {
+    name: "address_line",
+    pattern: /^address\s*(line)?\s*1$|^street\s*address$/i,
+    answer: { kind: "dataKey", path: "candidate.address", fallback: "123 Main St" },
+    interaction: "text",
+  },
+  {
+    name: "city_field",
+    pattern: /^city$/i,
+    answer: { kind: "dataKey", path: "candidate.city", fallback: "Austin" },
+    interaction: "text",
+  },
+  {
+    name: "state_field",
+    pattern: /^state$/i,
+    answer: { kind: "dataKey", path: "candidate.state", fallback: "Texas" },
+    interaction: "react-select",
+    searchSeed: "Tex",
+  },
+  {
+    name: "country_field",
+    pattern: /^country$/i,
+    answer: { kind: "dataKey", path: "candidate.country", fallback: "United States" },
+    interaction: "react-select",
+    searchSeed: "US",
+  },
+  {
+    name: "zip_code",
+    pattern: /zip\s*code|postal\s*code/i,
+    answer: { kind: "dataKey", path: "candidate.zipCode", fallback: "78701" },
+    interaction: "text",
+  },
+
   // ── LinkedIn ──────────────────────────────────────────────────────────
   {
     name: "linkedin_profile",
     pattern: /linkedin/i,
     answer: { kind: "dataKey", path: "candidate.linkedin", fallback: "N/A" },
+    interaction: "text",
+  },
+
+  // ── Website / portfolio URL ─────────────────────────────────────────
+  {
+    name: "website_field",
+    pattern: /^website$|^personal\s*website$/i,
+    answer: { kind: "dataKey", path: "candidate.website", fallback: "N/A" },
     interaction: "text",
   },
 
@@ -298,11 +360,79 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   },
 
   // ── Currently using product ───────────────────────────────────────────
+  // Only match short "have you used <product>?" yes/no questions.
+  // Exclude long freeform questions that ask "what ... have you used"
+  // (e.g. "What AI tools have you used to help enhance the work you do?")
   {
     name: "used_product",
-    pattern: /have\s*you\s*used\s+\w+\b(?!\s*robinhood.*employee|.*worked)/i,
+    pattern: /^have\s*you\s*used\s+\w+\b(?!\s*robinhood.*employee|.*worked)/i,
     answer: { kind: "literal", value: "Yes" },
     interaction: "react-select",
+  },
+
+  // ── Education level ──────────────────────────────────────────────────
+  {
+    name: "education_level",
+    pattern: /highest.*level.*education|education.*completed|degree|highest.*degree/i,
+    answer: { kind: "dataKey", path: "candidate.education", fallback: "Bachelor's degree in Computer Science" },
+    interaction: "text",
+  },
+
+  // ── System architecture expertise ────────────────────────────────────
+  {
+    name: "system_architecture_expertise",
+    pattern: /expertise\s*in\s*system\s*architecture|system\s*architecture.*scalability|design\s*for\s*scalability.*reliability/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Dependent freeform: "describe your ML work" ────────────────────
+  // Must come BEFORE the generic ML experience rule — "describe your work
+  // with Machine Learning" is a freeform textarea, not a Yes/No combobox.
+  {
+    name: "describe_ml_work",
+    pattern: /describe\s*your\s*work\s*with\s*machine\s*learning|describe.*machine\s*learning.*production|please\s*describe.*machine\s*learning/i,
+    answer: { kind: "dataKey", path: "candidate.mlExperience", fallback: "I have applied machine learning models for predictive analytics, feature engineering, and data pipeline optimization in production SaaS environments." },
+    interaction: "text",
+  },
+
+  // ── Machine Learning experience ────────────────────────────────────
+  {
+    name: "machine_learning_experience",
+    pattern: /experience\s*with\s*machine\s*learning|machine\s*learning\s*concepts/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Generic "do you have experience with/in X" ─────────────────────
+  // Catches patterns like "Do you have experience deploying...",
+  // "Do you have experience with Kubernetes?", etc.
+  // Uses "text" interaction so it works for both text inputs and
+  // textareas. Combobox variants that don't match this rule are handled
+  // by the unmatched-dropdown fallback (which also defaults to "Yes").
+  {
+    name: "have_experience_with",
+    pattern: /^do\s*you\s*have\s*(any\s*)?experience\s*(with|deploying|in|building|working|managing|using|creating|designing)/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "text",
+  },
+
+  // ── Privacy / data consent acknowledgment ───────────────────────────
+  {
+    name: "privacy_consent",
+    pattern: /consent.*collection|consent.*personal\s*data|privacy\s*policy|data.*privacy.*consent|i\s*consent/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── "What type of work does <company> do" ───────────────────────────
+  // Company-knowledge dropdown; fall back to a safe generic answer.
+  {
+    name: "company_work_type",
+    pattern: /what\s*(type|kind)\s*of\s*work\s*does/i,
+    answer: { kind: "literal", value: "Technology" },
+    interaction: "react-select",
+    searchSeed: "Tech",
   },
 
 ];
