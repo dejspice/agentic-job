@@ -168,6 +168,7 @@ export async function runGoogleBatch(
     artifactDir?: string;
     outputPath?: string;
     quiet?: boolean;
+    headless?: boolean;
     candidateProfile?: CandidateProfileFields;
     onProgress?: (completed: number, total: number, result: BatchRunResult) => void;
   },
@@ -297,6 +298,7 @@ export async function runGoogleBatch(
         {
           artifactDir,
           quiet,
+          headless: options.headless,
         },
       );
     } catch (err) {
