@@ -175,12 +175,15 @@ async function runGoogleMode(): Promise<void> {
 
   printHeader(rows.length, "google");
 
+  const headless = process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false";
+
   const summary = await runGoogleBatch(rows, {
     spreadsheetId,
     sheetName,
     artifactDir: resolve("./artifacts-batch"),
     outputPath: resolve("./artifacts-batch/run-results.json"),
     quiet: true,
+    headless,
     candidateProfile: {
       city: candidate.city,
       state: candidate.state,
