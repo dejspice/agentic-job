@@ -60,6 +60,15 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
   },
   {
     selectors: [
+      "#preferred_name",
+      'input[name="job_application[preferred_name]"]',
+      'input[name*="preferred_name"]',
+    ],
+    dataKey: "candidate.firstName",
+    required: false,
+  },
+  {
+    selectors: [
       "#email",
       'input[name="job_application[email]"]',
       'input[type="email"]',
@@ -224,7 +233,6 @@ export const fillRequiredFieldsState: StateHandler = {
       const value = resolveValue(context.data, field.dataKey);
 
       if (!value) {
-        // Skip optional fields silently; mark required ones as failures.
         if (field.required) {
           failedFields.push(field.selectors[0]!);
         }
@@ -234,10 +242,13 @@ export const fillRequiredFieldsState: StateHandler = {
       let filled = false;
 
       for (const selector of field.selectors) {
+        // Use a longer timeout for core fields — some Greenhouse boards
+        // render the form lazily after JavaScript hydration.
+        const waitMs = field.required ? 1500 : 200;
         const checkResult = await context.execute({
           type: "WAIT_FOR",
           target: selector,
-          timeoutMs: 200,
+          timeoutMs: waitMs,
         });
         if (!checkResult.success) continue;
 
@@ -320,6 +331,53 @@ export const fillRequiredFieldsState: StateHandler = {
 
       if (!filled && field.required) {
         failedFields.push(field.selectors[0]!);
+      }
+    }
+
+    // ── Retry pass for required fields that failed on first attempt ───
+    // Some Greenhouse boards hydrate form fields asynchronously after
+    // the initial page render.  A short pause + second attempt with a
+    // longer timeout catches late-loading fields.
+    if (failedFields.length > 0) {
+      const retryTargets = GREENHOUSE_FIELDS.filter(
+        (f) => f.required && failedFields.includes(f.selectors[0]!),
+      );
+
+      if (retryTargets.length > 0) {
+        // Wait for late-loading fields
+        await context.execute({ type: "WAIT_FOR", target: "body", timeoutMs: 2000 });
+
+        const retried: string[] = [];
+        for (const field of retryTargets) {
+          const value = resolveValue(context.data, field.dataKey);
+          if (!value) continue;
+
+          for (const selector of field.selectors) {
+            const checkResult = await context.execute({
+              type: "WAIT_FOR",
+              target: selector,
+              timeoutMs: 3000,
+            });
+            if (!checkResult.success) continue;
+
+            const typeResult = await context.execute({
+              type: "TYPE",
+              selector,
+              value,
+              clearFirst: true,
+            });
+            if (typeResult.success) {
+              retried.push(field.selectors[0]!);
+              filledFields.push(selector);
+              break;
+            }
+          }
+        }
+
+        for (const sel of retried) {
+          const idx = failedFields.indexOf(sel);
+          if (idx !== -1) failedFields.splice(idx, 1);
+        }
       }
     }
 

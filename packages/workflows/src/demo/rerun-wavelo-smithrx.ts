@@ -20,8 +20,8 @@ import type { ApplicationResult } from "../harness/greenhouse-live-harness.js";
 import { RuntimeProvider } from "@dejsol/browser-broker";
 import { loadCandidateProfile } from "./load-candidate.js";
 
-const SPREADSHEET_ID = "1-uOsL9Z6F22lrHaPk30vU-7HmXh2Y9nP6iCNXlovb08";
-const SHEET_NAME = "Job Tracking";
+const SPREADSHEET_ID = process.env["GOOGLE_SHEET_ID"] ?? "1-uOsL9Z6F22lrHaPk30vU-7HmXh2Y9nP6iCNXlovb08";
+const SHEET_NAME = process.env["GOOGLE_SHEET_NAME"] ?? "Job Tracking";
 const ARTIFACT_DIR = resolve("./artifacts-batch");
 
 const TARGET_COMPANIES = (process.env["RERUN_COMPANIES"] ?? "Wavelo,SmithRx").split(",").map(s => s.trim());
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
     const company = String(row[2] ?? "").trim();
     const jobUrl = String(row[6] ?? "").trim();
     const resumeLink = String(row[7] ?? "").trim();
-    if (TARGET_ROWS.includes(rowIndex) && TARGET_COMPANIES.includes(company) && jobUrl) {
+    if ((TARGET_ROWS.includes(rowIndex) || TARGET_COMPANIES.includes(company)) && jobUrl) {
       targetRows.push({ rowIndex, company, jobTitle: String(row[1] ?? "").trim(), jobUrl, resumeLink });
     }
   }
