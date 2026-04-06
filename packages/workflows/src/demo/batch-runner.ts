@@ -61,6 +61,7 @@ export async function runBatch(
     artifactDir?: string;
     outputPath?: string;
     quiet?: boolean;
+    headless?: boolean;
     onProgress?: (completed: number, total: number, result: BatchRunResult) => void;
   },
 ): Promise<BatchSummary> {
@@ -70,6 +71,7 @@ export async function runBatch(
     options?.outputPath ?? "./artifacts-batch/run-results.json",
   );
   const quiet = options?.quiet ?? false;
+  const headless = options?.headless ?? (process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false");
 
   const results: BatchRunResult[] = [];
   const startedAt = new Date().toISOString();
@@ -100,6 +102,7 @@ export async function runBatch(
         {
           artifactDir,
           quiet,
+          headless,
         },
       );
     } catch (err) {
@@ -168,6 +171,7 @@ export async function runGoogleBatch(
     artifactDir?: string;
     outputPath?: string;
     quiet?: boolean;
+    headless?: boolean;
     candidateProfile?: CandidateProfileFields;
     onProgress?: (completed: number, total: number, result: BatchRunResult) => void;
   },
@@ -178,6 +182,7 @@ export async function runGoogleBatch(
     options.outputPath ?? "./artifacts-batch/run-results.json",
   );
   const quiet = options.quiet ?? false;
+  const headless = options.headless ?? (process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false");
 
   const results: BatchRunResult[] = [];
   const startedAt = new Date().toISOString();
@@ -297,6 +302,7 @@ export async function runGoogleBatch(
         {
           artifactDir,
           quiet,
+          headless,
         },
       );
     } catch (err) {
