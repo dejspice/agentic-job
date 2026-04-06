@@ -103,9 +103,6 @@ export async function fillReactSelect(
         await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
         return true;
       }
-      // Fallback: click option-0 (first option in the filtered list)
-      await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
-      return true;
     }
 
     // Seed produced zero results — clear and retry with no filter to
@@ -132,8 +129,6 @@ export async function fillReactSelect(
         await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
         return true;
       }
-      await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
-      return true;
     }
   }
 
@@ -268,17 +263,43 @@ export const answerScreeningQuestionsState: StateHandler = {
         //     Use LLM fallback to generate a concise answer.
 
         if (q.required && q.role === "combobox") {
-          const fillOk = await fillReactSelect(context.execute, q.selector, "Yes");
-          if (fillOk) {
-            answered.push(q.label);
-            continue;
+          const qId = extractQuestionId(q.selector);
+          await context.execute({ type: "TYPE", selector: q.selector, value: "", sequential: true });
+          await context.execute({ type: "WAIT_FOR", target: `[id^="react-select-${qId}-option"]`, timeoutMs: 1500 });
+          const opts = await readVisibleOptions(context.execute, qId);
+          if (opts.length > 0) {
+            const yesMatch = pickBestOption("Yes", opts);
+            if (yesMatch && yesMatch.score >= 50) {
+              const winSel = `#react-select-${qId}-option-${yesMatch.index}`;
+              await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
+              answered.push(q.label);
+              continue;
+            }
+            const noMatch = pickBestOption("No", opts);
+            if (noMatch && noMatch.score >= 50) {
+              const winSel = `#react-select-${qId}-option-${noMatch.index}`;
+              await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
+              answered.push(q.label);
+              continue;
+            }
           }
+          await context.execute({ type: "TYPE", selector: q.selector, value: "", clearFirst: true });
         }
 
         if (q.required && q.role !== "combobox") {
           const answerGen = context.data.answerGenerator as AnswerGeneratorService | undefined;
           if (answerGen) {
             const fieldLimit = q.maxLength ?? 200;
+            const candidateData = context.data.candidate as Record<string, string> | undefined;
+            const profile = candidateData ? {
+              name: `${candidateData.firstName ?? ""} ${candidateData.lastName ?? ""}`.trim(),
+              email: candidateData.email,
+              phone: candidateData.phone,
+              location: candidateData.location ?? (candidateData.city && candidateData.state
+                ? `${candidateData.city}, ${candidateData.state}`
+                : candidateData.city ?? candidateData.state),
+              yearsOfExperience: 8,
+            } : undefined;
             const generated = await answerGen.generate(
               {
                 question: q.label,
@@ -288,7 +309,7 @@ export const answerScreeningQuestionsState: StateHandler = {
                 maxLength: fieldLimit,
               },
               {},
-              undefined,
+              profile as never,
             );
             if (generated) {
               const answer = q.maxLength
@@ -329,7 +350,18 @@ export const answerScreeningQuestionsState: StateHandler = {
           : rule.interaction === "react-select";
 
       if (useReactSelect) {
-        const fillOk = await fillReactSelect(context.execute, selector, value, rule.searchSeed);
+        let resolvedSeed = rule.searchSeed;
+        if (resolvedSeed?.startsWith("dataKey:")) {
+          const seedPath = resolvedSeed.slice("dataKey:".length);
+          const parts = seedPath.split(".");
+          let cur: unknown = context.data;
+          for (const p of parts) {
+            if (cur == null || typeof cur !== "object") { cur = undefined; break; }
+            cur = (cur as Record<string, unknown>)[p];
+          }
+          resolvedSeed = typeof cur === "string" ? cur : undefined;
+        }
+        const fillOk = await fillReactSelect(context.execute, selector, value, resolvedSeed);
         if (fillOk) {
           answered.push(q.label);
           filled = true;

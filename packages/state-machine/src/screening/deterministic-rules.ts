@@ -110,6 +110,15 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     interaction: "text",
   },
 
+  // ── Location (freeform / dropdown: "Where are you located?") ────────
+  {
+    name: "location_where",
+    pattern: /where\s*(are\s*you|do\s*you)\s*(located|live|reside)|your\s*location|current\s*location|primary\s*location/i,
+    answer: { kind: "dataKey", path: "candidate.location", fallback: "Dallas, TX" },
+    interaction: "react-select",
+    searchSeed: "dataKey:candidate.city",
+  },
+
   // ── LinkedIn ──────────────────────────────────────────────────────────
   {
     name: "linkedin_profile",
@@ -250,6 +259,14 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     searchSeed: "Other",
   },
 
+  // ── Follow-up: "If you selected 'Other' please indicate the source" ──
+  {
+    name: "referral_source_other",
+    pattern: /indicate\s*the\s*source|please\s*specify.*source|if\s*you\s*selected.*other|other.*please\s*specify|specify.*referral|indicate.*how.*heard/i,
+    answer: { kind: "literal", value: "Job board" },
+    interaction: "text",
+  },
+
   // ── Willing to relocate ───────────────────────────────────────────────
   {
     name: "willing_to_relocate",
@@ -258,7 +275,15 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     interaction: "react-select",
   },
 
-  // ── Salary expectation ────────────────────────────────────────────────
+  // ── Salary expectation (monthly — must come before annual catch-all) ──
+  {
+    name: "salary_expectation_monthly",
+    pattern: /monthly\s*salary|salary.*monthly|monthly.*compensation|monthly.*pay/i,
+    answer: { kind: "dataKey", path: "candidate.monthlySalaryRange", fallback: "$10,000 - $12,000" },
+    interaction: "text",
+  },
+
+  // ── Salary expectation (annual) ────────────────────────────────────────
   {
     name: "salary_expectation",
     pattern: /salary|compensation|pay\s*expectation|desired\s*pay/i,
@@ -422,6 +447,24 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     name: "privacy_consent",
     pattern: /consent.*collection|consent.*personal\s*data|privacy\s*policy|data.*privacy.*consent|i\s*consent/i,
     answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── "Please confirm you understand" / acknowledgments ──────────────
+  {
+    name: "confirm_acknowledge",
+    pattern: /please\s*confirm\s*you\s*understand|confirm\s*that\s*you|acknowledge\s*that|do\s*you\s*agree\s*to|i\s*understand/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Company-specific enrollment / membership / graduate ─────────────
+  // Questions like "Are you enrolled in X program?", "Are you a member
+  // of our network?" — should default to "No" not "Yes".
+  {
+    name: "company_program_enrollment",
+    pattern: /currently\s*enrolled|are\s*you\s*(a\s*)?member\s*of\s*our|graduate\s*of\s*(a\s*)?.*program|are\s*you\s*(a\s*)?.*alumni/i,
+    answer: { kind: "literal", value: "No" },
     interaction: "react-select",
   },
 
