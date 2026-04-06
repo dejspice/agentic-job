@@ -356,6 +356,36 @@ describe("persistRunResult", () => {
     });
   });
 
+  // ── answersJson ──────────────────────────────────────────────────────
+
+  describe("answersJson", () => {
+    it("defaults to {} when answersJson is not provided", async () => {
+      await persistRunResult(RUN_ID, SUBMITTED_PAYLOAD, mock.prisma);
+      assert.deepEqual(mock.calls[0]?.data.answersJson, {});
+    });
+
+    it("passes structured screening answers through", async () => {
+      const answers = {
+        "linkedin profile": {
+          value: "https://linkedin.com/in/janedoe",
+          source: "rule",
+          confidence: 1.0,
+        },
+        "do you require visa sponsorship": {
+          value: "No",
+          source: "rule",
+          confidence: 1.0,
+        },
+      };
+      const payload: RunResultPayload = {
+        ...SUBMITTED_PAYLOAD,
+        answersJson: answers,
+      };
+      await persistRunResult(RUN_ID, payload, mock.prisma);
+      assert.deepEqual(mock.calls[0]?.data.answersJson, answers);
+    });
+  });
+
   // ── Idempotency ───────────────────────────────────────────────────────────
 
   describe("idempotency", () => {

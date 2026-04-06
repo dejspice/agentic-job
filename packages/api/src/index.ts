@@ -32,7 +32,7 @@ export {
 } from "./mappers.js";
 
 // Workflow result persistence + DB queries
-export { persistRunResult, queryVerificationRuns, computeKpiSnapshot, buildKpiSnapshot } from "./persistence.js";
+export { persistRunResult, loadAnswerBank, persistAnswerBank, queryVerificationRuns, computeKpiSnapshot, buildKpiSnapshot } from "./persistence.js";
 export type { RunResultPayload, KpiRunRow } from "./persistence.js";
 
 // API types
