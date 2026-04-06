@@ -35,6 +35,20 @@ function buildGmailClient() {
   return google.gmail({ version: "v1", auth: oauth2 });
 }
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#\d+;/g, "")
+    .trim();
+}
+
 function extractCodeFromText(text: string): string | null {
   // Pattern 1: bold or standalone code on its own line (Greenhouse format: "kj39KJk9")
   const standaloneRe = /^\s*([A-Za-z0-9]{6,10})\s*$/m;
@@ -52,7 +66,6 @@ function extractCodeFromText(text: string): string | null {
   let match;
   while ((match = codeBlockRe.exec(text)) !== null) {
     const candidate = match[1]!;
-    // Must have at least one letter and one digit to be a code
     if (/[A-Za-z]/.test(candidate) && /[0-9]/.test(candidate)) {
       return candidate;
     }
@@ -66,16 +79,31 @@ function decodeBase64Url(data: string): string {
   return Buffer.from(padded, "base64").toString("utf-8");
 }
 
-function extractBodyFromParts(parts: Array<{ mimeType?: string; body?: { data?: string }; parts?: unknown[] }>): string {
+type MimePart = { mimeType?: string; body?: { data?: string }; parts?: MimePart[] };
+
+function extractBodyFromParts(parts: MimePart[]): string {
+  // Prefer text/plain
   for (const part of parts) {
     if (part.mimeType === "text/plain" && part.body?.data) {
       return decodeBase64Url(part.body.data);
     }
     if (part.parts) {
-      const nested = extractBodyFromParts(part.parts as typeof parts);
+      const nested = extractBodyFromParts(part.parts);
       if (nested) return nested;
     }
   }
+
+  // Fallback to text/html with tag stripping
+  for (const part of parts) {
+    if (part.mimeType === "text/html" && part.body?.data) {
+      return stripHtml(decodeBase64Url(part.body.data));
+    }
+    if (part.parts) {
+      const nested = extractBodyFromParts(part.parts);
+      if (nested) return nested;
+    }
+  }
+
   return "";
 }
 
@@ -111,7 +139,8 @@ export async function pollForVerificationCode(
 
     try {
       const afterEpoch = Math.floor((Date.now() - searchWindowMs) / 1000);
-      const query = `from:no-reply@greenhouse.io subject:"Security code" after:${afterEpoch}`;
+      // Greenhouse sends from us.greenhouse-mail.io, not greenhouse.io
+      const query = `from:no-reply@us.greenhouse-mail.io subject:"Security code" after:${afterEpoch}`;
 
       const listRes = await gmail.users.messages.list({
         userId: "me",
@@ -130,10 +159,12 @@ export async function pollForVerificationCode(
 
         let body = "";
         const payload = fullMsg.data.payload;
-        if (payload?.body?.data) {
-          body = decodeBase64Url(payload.body.data);
-        } else if (payload?.parts) {
-          body = extractBodyFromParts(payload.parts as Parameters<typeof extractBodyFromParts>[0]);
+
+        if (payload?.parts) {
+          body = extractBodyFromParts(payload.parts as MimePart[]);
+        } else if (payload?.body?.data) {
+          const raw = decodeBase64Url(payload.body.data);
+          body = payload.mimeType === "text/html" ? stripHtml(raw) : raw;
         }
 
         if (!body) continue;
