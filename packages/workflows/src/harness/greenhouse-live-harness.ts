@@ -77,6 +77,8 @@ import { BrowserBroker, RuntimeProvider } from "@dejsol/browser-broker";
 import type { SessionRequirements, AllocatedSession } from "@dejsol/browser-broker";
 import { LocalFileArtifactStore } from "@dejsol/browser-worker";
 import { createAnswerGenerator, createClaudeProvider } from "@dejsol/intelligence";
+import type { AnswerBank } from "@dejsol/core";
+import type { ScreeningAnswerEntry } from "@dejsol/state-machine";
 import { pollForVerificationCode } from "../connectors/gmail-poller.js";
 import {
   executeGreenhouseHappyPath,
@@ -264,6 +266,8 @@ export interface ApplicationResult {
   finalState?: string;
   statesCompleted?: string[];
   artifactDir?: string;
+  screeningAnswers?: ScreeningAnswerEntry[];
+  updatedAnswerBank?: AnswerBank;
 }
 
 /**
@@ -280,6 +284,7 @@ export async function runGreenhouseApplication(
     provider?: RuntimeProvider;
     headless?: boolean;
     quiet?: boolean;
+    answerBank?: AnswerBank;
   },
 ): Promise<ApplicationResult> {
   const runId = options?.runId ?? randomUUID();
@@ -335,10 +340,13 @@ export async function runGreenhouseApplication(
       ? createAnswerGenerator(createClaudeProvider(anthropicKey))
       : createAnswerGenerator();
 
+    const inputAnswerBank: AnswerBank = (options?.answerBank as AnswerBank | undefined) ?? {};
+
     const data: Record<string, unknown> = {
       resumeFile: config.resumePath,
       candidate: candidateBag,
       answerGenerator,
+      answerBank: inputAnswerBank,
       company: urlCompany,
       jobTitle: undefined,
     };
@@ -389,6 +397,31 @@ export async function runGreenhouseApplication(
       }
     }
 
+    // ── Answer bank write-back ──────────────────────────────────────
+    // After successful runs, merge high-confidence screening answers
+    // into the answer bank so they can be reused on future applications.
+    const rawAnswers = (data.screeningAnswers ?? result.data?.screeningAnswers) as ScreeningAnswerEntry[] | undefined;
+    let updatedBank: AnswerBank | undefined;
+    if (rawAnswers && rawAnswers.length > 0 && (outcome === "SUBMITTED" || outcome === "VERIFICATION_REQUIRED")) {
+      updatedBank = { ...inputAnswerBank };
+      for (const entry of rawAnswers) {
+        if (entry.source === "prefilled" || entry.confidence < 0.7) continue;
+        const normKey = entry.question.toLowerCase().replace(/[*:?\s]+/g, " ").trim();
+        const bankSource = entry.source === "rule" ? "rule" as const
+          : entry.source === "llm" ? "generated" as const
+          : entry.source === "answer_bank" ? updatedBank[normKey]?.source ?? "generated" as const
+          : "generated" as const;
+        updatedBank[normKey] = {
+          question: entry.question,
+          answer: entry.answer,
+          source: bankSource,
+          confidence: entry.confidence,
+          lastUsed: new Date().toISOString(),
+          ...(entry.ruleName ? { ruleName: entry.ruleName } : {}),
+        };
+      }
+    }
+
     return {
       outcome,
       runId,
@@ -396,6 +429,8 @@ export async function runGreenhouseApplication(
       finalState: String(result.finalState),
       statesCompleted: result.statesCompleted.map(String),
       artifactDir: `${artifactDir}/${runId}`,
+      screeningAnswers: rawAnswers,
+      updatedAnswerBank: updatedBank,
       ...(result.error ? { error: result.error } : {}),
     };
   } catch (err) {
