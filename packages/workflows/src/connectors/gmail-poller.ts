@@ -12,6 +12,20 @@
 
 import { google } from "googleapis";
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?(p|div|tr|li|h[1-6])[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#\d+;/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export interface PollOptions {
   /** Max time to wait for the code. Default 60s. */
   timeoutMs?: number;
@@ -67,16 +81,21 @@ function decodeBase64Url(data: string): string {
 }
 
 function extractBodyFromParts(parts: Array<{ mimeType?: string; body?: { data?: string }; parts?: unknown[] }>): string {
+  let htmlFallback = "";
+
   for (const part of parts) {
     if (part.mimeType === "text/plain" && part.body?.data) {
       return decodeBase64Url(part.body.data);
+    }
+    if (part.mimeType === "text/html" && part.body?.data && !htmlFallback) {
+      htmlFallback = stripHtml(decodeBase64Url(part.body.data));
     }
     if (part.parts) {
       const nested = extractBodyFromParts(part.parts as typeof parts);
       if (nested) return nested;
     }
   }
-  return "";
+  return htmlFallback;
 }
 
 /**
@@ -111,7 +130,7 @@ export async function pollForVerificationCode(
 
     try {
       const afterEpoch = Math.floor((Date.now() - searchWindowMs) / 1000);
-      const query = `from:no-reply@greenhouse.io subject:"Security code" after:${afterEpoch}`;
+      const query = `from:no-reply@us.greenhouse-mail.io subject:"Security code" after:${afterEpoch}`;
 
       const listRes = await gmail.users.messages.list({
         userId: "me",
@@ -131,7 +150,8 @@ export async function pollForVerificationCode(
         let body = "";
         const payload = fullMsg.data.payload;
         if (payload?.body?.data) {
-          body = decodeBase64Url(payload.body.data);
+          const raw = decodeBase64Url(payload.body.data);
+          body = payload.mimeType === "text/html" ? stripHtml(raw) : raw;
         } else if (payload?.parts) {
           body = extractBodyFromParts(payload.parts as Parameters<typeof extractBodyFromParts>[0]);
         }

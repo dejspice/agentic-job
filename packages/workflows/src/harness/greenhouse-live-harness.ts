@@ -370,6 +370,7 @@ export async function runGreenhouseApplication(
     // If verification is required and Gmail credentials are configured,
     // poll for the code and enter it on the still-open page.
     if (verificationRequired && session?.page) {
+      console.log("[APPLY] Verification code required — checking Gmail...");
       const code = await pollForVerificationCode({
         timeoutMs: 90_000,
         pollIntervalMs: 3_000,
