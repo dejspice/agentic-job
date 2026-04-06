@@ -140,6 +140,63 @@ describe("matchScreeningQuestion — known patterns", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1b. New deterministic rules — SmithRx-style questions
+// ---------------------------------------------------------------------------
+
+describe("matchScreeningQuestion — SmithRx-style patterns", () => {
+  it("matches system architecture expertise as combobox", () => {
+    const result = matchScreeningQuestion(
+      "Do you have expertise in system architecture, including design for scalability, reliability, and maintainability?",
+      candidateData(),
+    );
+    assert.equal(result.matched, true);
+    if (result.matched) {
+      assert.equal(result.rule.name, "system_architecture_expertise");
+      assert.equal(result.value, "Yes");
+      assert.equal(result.rule.interaction, "react-select");
+    }
+  });
+
+  it("matches Machine Learning experience as combobox", () => {
+    const result = matchScreeningQuestion(
+      "Do you have experience with Machine Learning concepts and their application in software systems?",
+      candidateData(),
+    );
+    assert.equal(result.matched, true);
+    if (result.matched) {
+      assert.equal(result.rule.name, "machine_learning_experience");
+      assert.equal(result.value, "Yes");
+      assert.equal(result.rule.interaction, "react-select");
+    }
+  });
+
+  it("matches dependent ML describe-your-work textarea", () => {
+    const result = matchScreeningQuestion(
+      'If you answered "Yes" to the previous question, please describe your work with Machine Learning concepts in a production environment.',
+      candidateData(),
+    );
+    assert.equal(result.matched, true);
+    if (result.matched) {
+      assert.equal(result.rule.name, "describe_ml_work");
+      assert.equal(result.rule.interaction, "text");
+      assert.ok(result.value.length > 10, "Expected a substantive fallback answer");
+    }
+  });
+
+  it("matches years of software engineering experience via experience_duration", () => {
+    const result = matchScreeningQuestion(
+      "How many years of software engineering experience do you have?",
+      candidateData(),
+    );
+    assert.equal(result.matched, true);
+    if (result.matched) {
+      assert.equal(result.rule.name, "experience_duration");
+      assert.equal(result.rule.interaction, "react-select");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. Unknown question → no_match
 // ---------------------------------------------------------------------------
 
@@ -551,6 +608,37 @@ describe("pickBestOption — multi-option selection", () => {
     const result = pickBestOption("Yes", []);
     assert.equal(result, null);
   });
+
+  // ── US state name ↔ abbreviation matching ────────────────────────────
+
+  it("picks 'TX' when desired is 'Texas' (reverse alias)", () => {
+    const result = pickBestOption("Texas", [
+      "AL", "AK", "AZ", "CA", "CO", "CT", "DC", "FL", "GA", "HI",
+      "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA",
+      "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM",
+      "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD",
+      "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    ]);
+    assert.ok(result, "Expected a match for 'Texas' against abbreviations");
+    assert.equal(result.label, "TX");
+    assert.equal(result.score, 90);
+  });
+
+  it("picks 'California' when desired is 'CA' (forward alias)", () => {
+    const result = pickBestOption("CA", [
+      "Alabama", "California", "New York", "Texas",
+    ]);
+    assert.ok(result, "Expected a match for 'CA' against full names");
+    assert.equal(result.label, "California");
+  });
+
+  it("picks 'Pharmacy Benefits' from SmithRx-style company-work options", () => {
+    const result = pickBestOption("Technology", [
+      "Drug Therapies", "Medical Devices", "Pharmacy Benefits",
+    ]);
+    assert.ok(result, "Expected alias match for Technology against SmithRx options");
+    assert.equal(result.score, 90);
+  });
 });
 
 // ===========================================================================
@@ -588,7 +676,7 @@ describe("answerScreeningQuestionsState — LLM fallback for unknown freeform", 
               fields: [
                 {
                   selector: "#question_freeform",
-                  label: "Why do you want to join our company?",
+                  label: "Describe a time you improved a complex data pipeline under tight deadlines.",
                   type: "textarea",
                   value: null,
                   required: true,

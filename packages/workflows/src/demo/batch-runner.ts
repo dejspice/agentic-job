@@ -154,6 +154,12 @@ export async function runBatch(
  *   3. Execute the Greenhouse apply flow
  *   4. Write result back to the Google Sheet
  */
+export interface CandidateProfileFields {
+  city?: string;
+  state?: string;
+  country?: string;
+}
+
 export async function runGoogleBatch(
   rows: SheetApplicationRow[],
   options: {
@@ -162,6 +168,7 @@ export async function runGoogleBatch(
     artifactDir?: string;
     outputPath?: string;
     quiet?: boolean;
+    candidateProfile?: CandidateProfileFields;
     onProgress?: (completed: number, total: number, result: BatchRunResult) => void;
   },
 ): Promise<BatchSummary> {
@@ -267,6 +274,11 @@ export async function runGoogleBatch(
       continue;
     }
 
+    const profile = options.candidateProfile;
+    const location = profile?.city && profile?.state
+      ? `${profile.city}, ${profile.state}`
+      : profile?.city ?? profile?.state;
+
     let appResult: ApplicationResult;
     try {
       appResult = await runGreenhouseApplication(
@@ -277,6 +289,10 @@ export async function runGoogleBatch(
           email: row.email,
           phone: row.phone,
           resumePath,
+          city: profile?.city,
+          state: profile?.state,
+          country: profile?.country,
+          location,
         },
         {
           artifactDir,

@@ -257,11 +257,11 @@ describe("FILL_REQUIRED_FIELDS — optional field handling", () => {
     const result = await fillRequiredFieldsState.execute(ctx);
 
     assert.equal(result.outcome, "success", result.error);
-    // firstName, lastName, email filled; phone skipped
+    // firstName, lastName, preferred_name, email filled; phone skipped
     assert.equal(
       (result.data?.filledFields as string[] | undefined)?.length ?? 0,
-      3,
-      "Expected 3 fields filled (firstName, lastName, email)",
+      4,
+      "Expected 4 fields filled (firstName, lastName, preferred_name, email)",
     );
   });
 

@@ -24,7 +24,8 @@ const ANSWER_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
   ["5-10 years",      ["5 to 10 years", "5–10 years", "5 - 10 years"]],
   ["5+ years",        ["5 to 10 years", "5-10 years", "5–10 years",
                        "5 or more years", "more than 5 years",
-                       "10 or more years", "10+ years"]],
+                       "10 or more years", "10+ years",
+                       "8+", "8+ years", "7+", "7+ years", "6+", "6+ years"]],
   ["10+ years",       ["10 or more years", "more than 10 years", "10 plus years", "over 10 years"]],
   ["less than 1 year",["under 1 year", "< 1 year", "0-1 years", "0 to 1 year"]],
 
@@ -36,17 +37,74 @@ const ANSWER_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
   // ── Country name variants ──────────────────────────────────────────
   ["united states",   ["usa", "us", "u.s.", "u.s.a.", "united states of america", "america"]],
 
+  // ── US state name ↔ abbreviation ───────────────────────────────────
+  // Bidirectional: the desired value may be a full name or abbreviation
+  ["alabama", ["al"]], ["al", ["alabama"]],
+  ["alaska", ["ak"]], ["ak", ["alaska"]],
+  ["arizona", ["az"]], ["az", ["arizona"]],
+  ["arkansas", ["ar"]], ["ar", ["arkansas"]],
+  ["california", ["ca"]], ["ca", ["california"]],
+  ["colorado", ["co"]], ["co", ["colorado"]],
+  ["connecticut", ["ct"]], ["ct", ["connecticut"]],
+  ["delaware", ["de"]], ["de", ["delaware"]],
+  ["district of columbia", ["dc"]], ["dc", ["district of columbia"]],
+  ["florida", ["fl"]], ["fl", ["florida"]],
+  ["georgia", ["ga"]], ["ga", ["georgia"]],
+  ["hawaii", ["hi"]], ["hi", ["hawaii"]],
+  ["idaho", ["id"]], ["id", ["idaho"]],
+  ["illinois", ["il"]], ["il", ["illinois"]],
+  ["indiana", ["in"]], ["in", ["indiana"]],
+  ["iowa", ["ia"]], ["ia", ["iowa"]],
+  ["kansas", ["ks"]], ["ks", ["kansas"]],
+  ["kentucky", ["ky"]], ["ky", ["kentucky"]],
+  ["louisiana", ["la"]], ["la", ["louisiana"]],
+  ["maine", ["me"]], ["me", ["maine"]],
+  ["maryland", ["md"]], ["md", ["maryland"]],
+  ["massachusetts", ["ma"]], ["ma", ["massachusetts"]],
+  ["michigan", ["mi"]], ["mi", ["michigan"]],
+  ["minnesota", ["mn"]], ["mn", ["minnesota"]],
+  ["mississippi", ["ms"]], ["ms", ["mississippi"]],
+  ["missouri", ["mo"]], ["mo", ["missouri"]],
+  ["montana", ["mt"]], ["mt", ["montana"]],
+  ["nebraska", ["ne"]], ["ne", ["nebraska"]],
+  ["nevada", ["nv"]], ["nv", ["nevada"]],
+  ["new hampshire", ["nh"]], ["nh", ["new hampshire"]],
+  ["new jersey", ["nj"]], ["nj", ["new jersey"]],
+  ["new mexico", ["nm"]], ["nm", ["new mexico"]],
+  ["new york", ["ny"]], ["ny", ["new york"]],
+  ["north carolina", ["nc"]], ["nc", ["north carolina"]],
+  ["north dakota", ["nd"]], ["nd", ["north dakota"]],
+  ["ohio", ["oh"]], ["oh", ["ohio"]],
+  ["oklahoma", ["ok"]], ["ok", ["oklahoma"]],
+  ["oregon", ["or"]], ["or", ["oregon"]],
+  ["pennsylvania", ["pa"]], ["pa", ["pennsylvania"]],
+  ["rhode island", ["ri"]], ["ri", ["rhode island"]],
+  ["south carolina", ["sc"]], ["sc", ["south carolina"]],
+  ["south dakota", ["sd"]], ["sd", ["south dakota"]],
+  ["tennessee", ["tn"]], ["tn", ["tennessee"]],
+  ["texas", ["tx"]], ["tx", ["texas"]],
+  ["utah", ["ut"]], ["ut", ["utah"]],
+  ["vermont", ["vt"]], ["vt", ["vermont"]],
+  ["virginia", ["va"]], ["va", ["virginia"]],
+  ["washington", ["wa"]], ["wa", ["washington"]],
+  ["west virginia", ["wv"]], ["wv", ["west virginia"]],
+  ["wisconsin", ["wi"]], ["wi", ["wisconsin"]],
+  ["wyoming", ["wy"]], ["wy", ["wyoming"]],
+
   // ── Industry categories ──────────────────────────────────────────────
   ["technology",      ["tech", "software", "information technology", "it",
-                       "saas", "internet", "software / saas", "technology / software"]],
+                       "saas", "internet", "software / saas", "technology / software",
+                       "pharmacy benefits", "drug therapies", "medical devices"]],
   ["saas / software", ["saas", "software", "technology / software", "technology",
                        "b2b saas", "b2b (enterprise software, saas)", "software / saas"]],
   ["finance",         ["financial services", "banking", "fintech", "financial technology",
                        "financial services / fintech"]],
   ["healthcare",      ["health", "health care", "medical", "biotech", "life sciences",
-                       "healthcare / life sciences"]],
+                       "healthcare / life sciences",
+                       "pharmacy benefits", "drug therapies", "medical devices"]],
   ["e-commerce",      ["ecommerce", "retail", "online retail", "retail / e-commerce",
                        "consumer / b2c (e-commerce, media, mobile apps)"]],
+  ["pharmacy benefits", ["pbm", "pharmacy benefit management", "pharmacy", "rx"]],
 
   // ── Analytics scope — real Celigo Greenhouse labels ──────────────────
   ["company-wide",    ["company wide", "enterprise", "organization-wide", "org-wide",
@@ -154,11 +212,21 @@ export function scoreOption(desired: string, optionLabel: string): number {
 
   if (d === o) return 100;
 
-  // Alias expansion
+  // Forward alias: desired value's aliases match the option
   const aliases = ANSWER_ALIASES.get(d);
   if (aliases) {
     for (const alias of aliases) {
       if (norm(alias) === o) return 90;
+    }
+  }
+
+  // Reverse alias: option label's aliases match the desired value.
+  // Handles cases like desired="Texas" matching option="TX" (because
+  // the "tx" alias list contains "texas").
+  const reverseAliases = ANSWER_ALIASES.get(o);
+  if (reverseAliases) {
+    for (const alias of reverseAliases) {
+      if (norm(alias) === d) return 90;
     }
   }
 

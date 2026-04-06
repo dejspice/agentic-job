@@ -77,6 +77,7 @@ import { BrowserBroker, RuntimeProvider } from "@dejsol/browser-broker";
 import type { SessionRequirements, AllocatedSession } from "@dejsol/browser-broker";
 import { LocalFileArtifactStore } from "@dejsol/browser-worker";
 import { createAnswerGenerator, createClaudeProvider } from "@dejsol/intelligence";
+import { pollForVerificationCode } from "../connectors/gmail-poller.js";
 import {
   executeGreenhouseHappyPath,
   enterVerificationCode,
@@ -97,6 +98,7 @@ export interface HarnessConfig {
     lastName: string;
     email: string;
     phone?: string;
+    city?: string;
     country?: string;
     location?: string;
     linkedin?: string;
@@ -248,6 +250,8 @@ export interface ApplicationInput {
   email: string;
   phone?: string;
   resumePath: string;
+  city?: string;
+  state?: string;
   country?: string;
   location?: string;
 }
@@ -292,8 +296,10 @@ export async function runGreenhouseApplication(
       lastName: input.lastName,
       email: input.email,
       phone: input.phone,
-      country: input.country ?? "United States",
-      location: input.location ?? "United States",
+      city: input.city,
+      country: input.country,
+      location: input.location,
+      state: input.state,
     },
     provider,
     headless,
@@ -358,6 +364,28 @@ export async function runGreenhouseApplication(
       outcome = verificationRequired ? "VERIFICATION_REQUIRED" : "SUBMITTED";
     } else {
       outcome = "FAILED";
+    }
+
+    // ── Auto-verify via Gmail polling ────────────────────────────────
+    // If verification is required and Gmail credentials are configured,
+    // poll for the code and enter it on the still-open page.
+    if (verificationRequired && session?.page) {
+      const code = await pollForVerificationCode({
+        timeoutMs: 90_000,
+        pollIntervalMs: 3_000,
+        searchWindowMs: 120_000,
+      });
+
+      if (code) {
+        console.log(`[APPLY] Verification code received — entering...`);
+        const verifyResult = await enterVerificationCode(session.page, code);
+        if (verifyResult.success) {
+          console.log("[APPLY] Code accepted — application fully submitted");
+          outcome = "SUBMITTED";
+        } else {
+          console.log(`[APPLY] Code entry failed: ${verifyResult.outcome}`);
+        }
+      }
     }
 
     return {

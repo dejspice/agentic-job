@@ -1,5 +1,6 @@
 import { StateName } from "@dejsol/core";
 import type { StateHandler, StateContext, StateResult } from "../types.js";
+import type { CommandExecutor } from "../types.js";
 
 interface GreenhouseFieldDef {
   /**
@@ -18,11 +19,13 @@ interface GreenhouseFieldDef {
    */
   required: boolean;
   /**
-   * When "react-select", the field is a React Select dropdown. Filling
-   * requires clicking the control, typing the value, then pressing Enter
-   * to select the matching option.
+   * Interaction strategy:
+   *   "type"                  — plain text fill (default)
+   *   "react-select"          — standard React Select combobox
+   *   "location-autocomplete" — async React Select that fetches suggestions
+   *                             from a server endpoint (Greenhouse location)
    */
-  interaction?: "type" | "react-select";
+  interaction?: "type" | "react-select" | "location-autocomplete";
 }
 
 /**
@@ -54,6 +57,15 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
     ],
     dataKey: "candidate.lastName",
     required: true,
+  },
+  {
+    selectors: [
+      "#preferred_name",
+      'input[name="job_application[preferred_name]"]',
+      'input[name*="preferred_name"]',
+    ],
+    dataKey: "candidate.firstName",
+    required: false,
   },
   {
     selectors: [
@@ -92,11 +104,94 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
       'input[role="combobox"][id*="location"]',
       'input[id*="location"]',
     ],
-    dataKey: "candidate.location",
+    dataKey: "candidate.city",
     required: false,
-    interaction: "react-select",
+    interaction: "location-autocomplete",
   },
 ];
+
+/**
+ * Fill a Greenhouse location autocomplete field.
+ *
+ * Greenhouse #candidate-location is an async React Select that fetches
+ * location suggestions from a server endpoint after typing.  The suggestions
+ * are standard React Select option elements but only appear after a
+ * network round-trip.
+ *
+ * Strategy:
+ *   1. Click + type the city name character-by-character (triggers async fetch)
+ *   2. Wait up to 5s for react-select option elements to appear
+ *   3. Click the first matching suggestion
+ *   4. If no suggestions appear, press ArrowDown + Enter as a commit fallback
+ */
+async function fillLocationAutocomplete(
+  execute: CommandExecutor,
+  selector: string,
+  value: string,
+): Promise<boolean> {
+  const fieldId = selector.replace(/^#/, "");
+  const specificOptionPrefix = `[id^="react-select-${fieldId}-option"]`;
+
+  const OPTION_SELECTORS: readonly string[] = [
+    specificOptionPrefix,
+    "[id*='-option-']",
+    "[role='option']:not([id^='iti-'])",
+    ".select__option",
+    ".pac-item",
+  ];
+
+  // Type the city name to trigger the async suggestion fetch.
+  // Use only the city portion (before any comma) — Greenhouse's location
+  // search returns better results for bare city names than "City, ST".
+  const seed = value.split(",")[0]!.trim();
+  await execute({ type: "TYPE", selector, value: seed, sequential: true });
+
+  // Wait longer than standard React Select — the suggestion fetch is async.
+  let optionFound = false;
+  for (const optSel of OPTION_SELECTORS) {
+    const optWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 5000 });
+    if (optWait.success) {
+      optionFound = true;
+
+      // Read and click the first option for this specific field
+      const firstOpt = `#react-select-${fieldId}-option-0`;
+      const firstExists = await execute({ type: "WAIT_FOR", target: firstOpt, timeoutMs: 1000 });
+      if (firstExists.success) {
+        await execute({ type: "CLICK", target: { kind: "css", value: firstOpt } });
+        return true;
+      }
+
+      // Fallback: click the generic first option
+      await execute({ type: "CLICK", target: { kind: "css", value: optSel } });
+      return true;
+    }
+  }
+
+  if (!optionFound) {
+    // No suggestions appeared. Retry with the full "City, State" value —
+    // some Greenhouse location fields have a different search backend
+    // that works better with the complete string.
+    await execute({ type: "TYPE", selector, value: "", clearFirst: true });
+    await execute({ type: "TYPE", selector, value: value, sequential: true });
+
+    // Wait one more time for async suggestions
+    for (const optSel of OPTION_SELECTORS) {
+      const retryWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 5000 });
+      if (retryWait.success) {
+        const firstOpt = `#react-select-${fieldId}-option-0`;
+        const firstExists = await execute({ type: "WAIT_FOR", target: firstOpt, timeoutMs: 1000 });
+        if (firstExists.success) {
+          await execute({ type: "CLICK", target: { kind: "css", value: firstOpt } });
+          return true;
+        }
+        await execute({ type: "CLICK", target: { kind: "css", value: optSel } });
+        return true;
+      }
+    }
+  }
+
+  return optionFound;
+}
 
 function resolveValue(
   data: Record<string, unknown>,
@@ -138,7 +233,6 @@ export const fillRequiredFieldsState: StateHandler = {
       const value = resolveValue(context.data, field.dataKey);
 
       if (!value) {
-        // Skip optional fields silently; mark required ones as failures.
         if (field.required) {
           failedFields.push(field.selectors[0]!);
         }
@@ -148,12 +242,25 @@ export const fillRequiredFieldsState: StateHandler = {
       let filled = false;
 
       for (const selector of field.selectors) {
+        // Use a longer timeout for core fields — some Greenhouse boards
+        // render the form lazily after JavaScript hydration.
+        const waitMs = field.required ? 1500 : 200;
         const checkResult = await context.execute({
           type: "WAIT_FOR",
           target: selector,
-          timeoutMs: 200,
+          timeoutMs: waitMs,
         });
         if (!checkResult.success) continue;
+
+        if (field.interaction === "location-autocomplete") {
+          const locFilled = await fillLocationAutocomplete(context.execute, selector, value);
+          if (locFilled) {
+            filledFields.push(selector);
+            filled = true;
+            break;
+          }
+          continue;
+        }
 
         if (field.interaction === "react-select") {
           // React Select / combobox interaction ported from apply_agent.py:
@@ -224,6 +331,53 @@ export const fillRequiredFieldsState: StateHandler = {
 
       if (!filled && field.required) {
         failedFields.push(field.selectors[0]!);
+      }
+    }
+
+    // ── Retry pass for required fields that failed on first attempt ───
+    // Some Greenhouse boards hydrate form fields asynchronously after
+    // the initial page render.  A short pause + second attempt with a
+    // longer timeout catches late-loading fields.
+    if (failedFields.length > 0) {
+      const retryTargets = GREENHOUSE_FIELDS.filter(
+        (f) => f.required && failedFields.includes(f.selectors[0]!),
+      );
+
+      if (retryTargets.length > 0) {
+        // Wait for late-loading fields
+        await context.execute({ type: "WAIT_FOR", target: "body", timeoutMs: 2000 });
+
+        const retried: string[] = [];
+        for (const field of retryTargets) {
+          const value = resolveValue(context.data, field.dataKey);
+          if (!value) continue;
+
+          for (const selector of field.selectors) {
+            const checkResult = await context.execute({
+              type: "WAIT_FOR",
+              target: selector,
+              timeoutMs: 3000,
+            });
+            if (!checkResult.success) continue;
+
+            const typeResult = await context.execute({
+              type: "TYPE",
+              selector,
+              value,
+              clearFirst: true,
+            });
+            if (typeResult.success) {
+              retried.push(field.selectors[0]!);
+              filledFields.push(selector);
+              break;
+            }
+          }
+        }
+
+        for (const sel of retried) {
+          const idx = failedFields.indexOf(sel);
+          if (idx !== -1) failedFields.splice(idx, 1);
+        }
       }
     }
 

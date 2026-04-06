@@ -360,9 +360,12 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   },
 
   // ── Currently using product ───────────────────────────────────────────
+  // Only match short "have you used <product>?" yes/no questions.
+  // Exclude long freeform questions that ask "what ... have you used"
+  // (e.g. "What AI tools have you used to help enhance the work you do?")
   {
     name: "used_product",
-    pattern: /have\s*you\s*used\s+\w+\b(?!\s*robinhood.*employee|.*worked)/i,
+    pattern: /^have\s*you\s*used\s+\w+\b(?!\s*robinhood.*employee|.*worked)/i,
     answer: { kind: "literal", value: "Yes" },
     interaction: "react-select",
   },
@@ -373,6 +376,32 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
     pattern: /highest.*level.*education|education.*completed|degree|highest.*degree/i,
     answer: { kind: "dataKey", path: "candidate.education", fallback: "Bachelor's degree in Computer Science" },
     interaction: "text",
+  },
+
+  // ── System architecture expertise ────────────────────────────────────
+  {
+    name: "system_architecture_expertise",
+    pattern: /expertise\s*in\s*system\s*architecture|system\s*architecture.*scalability|design\s*for\s*scalability.*reliability/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
+  },
+
+  // ── Dependent freeform: "describe your ML work" ────────────────────
+  // Must come BEFORE the generic ML experience rule — "describe your work
+  // with Machine Learning" is a freeform textarea, not a Yes/No combobox.
+  {
+    name: "describe_ml_work",
+    pattern: /describe\s*your\s*work\s*with\s*machine\s*learning|describe.*machine\s*learning.*production|please\s*describe.*machine\s*learning/i,
+    answer: { kind: "dataKey", path: "candidate.mlExperience", fallback: "I have applied machine learning models for predictive analytics, feature engineering, and data pipeline optimization in production SaaS environments." },
+    interaction: "text",
+  },
+
+  // ── Machine Learning experience ────────────────────────────────────
+  {
+    name: "machine_learning_experience",
+    pattern: /experience\s*with\s*machine\s*learning|machine\s*learning\s*concepts/i,
+    answer: { kind: "literal", value: "Yes" },
+    interaction: "react-select",
   },
 
   // ── Generic "do you have experience with/in X" ─────────────────────

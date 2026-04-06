@@ -10,7 +10,7 @@ const STATUS_CONFIG: Record<
   { label: string; bg: string; color: string }
 > = {
   SUBMITTED:             { label: "Submitted",            bg: "#dcfce7", color: "#15803d" },
-  VERIFICATION_REQUIRED: { label: "Verify Email",         bg: "#fef3c7", color: "#b45309" },
+  VERIFICATION_REQUIRED: { label: "Submitted — Verify",   bg: "#fef3c7", color: "#b45309" },
   FAILED:                { label: "Failed",               bg: "#fee2e2", color: "#b91c1c" },
   ESCALATED:             { label: "Escalated",            bg: "#f3e8ff", color: "#7e22ce" },
   CANCELLED:             { label: "Cancelled",            bg: "#f1f5f9", color: "#475569" },

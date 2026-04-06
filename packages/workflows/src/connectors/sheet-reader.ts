@@ -13,7 +13,7 @@
  *
  * Candidate info (firstName, lastName, email, phone) is NOT in the sheet —
  * it's a single-user job tracker. The caller provides candidate details
- * via env vars or explicit arguments.
+ * via the CandidateInfo argument.
  */
 
 import { google } from "googleapis";
@@ -57,8 +57,8 @@ export interface CandidateInfo {
  * Read pending application rows from a Google Sheet.
  * Returns rows where Status (col E) is "Not Applied" or empty.
  *
- * Candidate info is injected into each row from the provided defaults
- * since the sheet is a single-user job tracker.
+ * Candidate info is injected into each row from the provided CandidateInfo.
+ * The caller MUST supply candidate data — there are no env var fallbacks.
  */
 export async function readPendingRows(
   options: SheetReaderOptions,
@@ -85,10 +85,10 @@ export async function readPendingRows(
   const rawRows = (res.data.values ?? []) as string[][];
   const pending: SheetApplicationRow[] = [];
 
-  const firstName = candidate?.firstName ?? process.env["CANDIDATE_FIRST_NAME"] ?? "Test";
-  const lastName = candidate?.lastName ?? process.env["CANDIDATE_LAST_NAME"] ?? "Candidate";
-  const email = candidate?.email ?? process.env["CANDIDATE_EMAIL"] ?? "test@example.com";
-  const phone = candidate?.phone ?? process.env["CANDIDATE_PHONE"] ?? "";
+  const firstName = candidate?.firstName ?? "Candidate";
+  const lastName = candidate?.lastName ?? "Unknown";
+  const email = candidate?.email ?? "missing@example.com";
+  const phone = candidate?.phone ?? "";
 
   for (let i = 0; i < rawRows.length; i++) {
     const row = rawRows[i];
