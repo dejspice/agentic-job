@@ -214,6 +214,16 @@ export interface RunErrorEntry {
   recoverable?: boolean;
 }
 
+export interface ScreeningAnswerEntry {
+  question: string;
+  answer: string;
+  source: "rule" | "answer_bank" | "llm" | "combobox_fallback" | "prefilled";
+  ruleName?: string;
+  confidence: number;
+  fieldType: string;
+  selector: string;
+}
+
 export interface RunDetailView {
   id: string;
   jobId: string;
@@ -233,6 +243,7 @@ export interface RunDetailView {
   completedAt: string | null;
   confirmationId: string | null;
   errors: RunErrorEntry[];
+  screeningAnswers?: ScreeningAnswerEntry[];
 }
 
 // ---------------------------------------------------------------------------

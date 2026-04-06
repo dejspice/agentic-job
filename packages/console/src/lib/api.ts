@@ -32,6 +32,7 @@ import type {
   RunOutcome,
   StateName,
   VerificationQueueItem,
+  ScreeningAnswerEntry,
 } from "../types";
 import { MOCK_KPI_SNAPSHOTS, MOCK_VERIFICATION_QUEUE, computeReviewQueueStats } from "./mock-data";
 
@@ -288,4 +289,59 @@ export async function rejectRun(
     method: "POST",
     body: JSON.stringify({ approved: false, reviewerNote }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Screening answer review
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch persisted screening answers for a run.
+ * GET /api/runs/:runId/screening-answers
+ */
+export async function getRunScreeningAnswers(
+  runId: string,
+): Promise<{ answers: ScreeningAnswerEntry[]; candidateId: string; outcome: string | null }> {
+  try {
+    const data = await apiFetch<{
+      answersJson: Record<string, { question?: string; answer?: string; source?: string; confidence?: number; ruleName?: string; fieldType?: string; selector?: string }>;
+      candidateId: string;
+      outcome: string | null;
+    }>(`/runs/${runId}/screening-answers`);
+    const raw = data?.answersJson ?? {};
+    const answers: ScreeningAnswerEntry[] = Object.values(raw)
+      .filter((v): v is { question: string; answer: string; source: string; confidence: number; fieldType: string; selector: string } =>
+        typeof v === "object" && v !== null && "question" in v && "answer" in v)
+      .map((v) => ({
+        question: v.question ?? "",
+        answer: v.answer ?? "",
+        source: (v.source ?? "rule") as ScreeningAnswerEntry["source"],
+        ruleName: (v as { ruleName?: string }).ruleName,
+        confidence: v.confidence ?? 1.0,
+        fieldType: v.fieldType ?? "text",
+        selector: v.selector ?? "",
+      }));
+    return { answers, candidateId: data?.candidateId ?? "", outcome: data?.outcome ?? null };
+  } catch {
+    return { answers: [], candidateId: "", outcome: null };
+  }
+}
+
+/**
+ * Approve (and optionally edit) screening answers for a run.
+ * Writes approved answers into the candidate's answer bank.
+ * POST /api/runs/:runId/screening-answers/approve
+ */
+export async function approveScreeningAnswers(
+  runId: string,
+  answers: Array<{ question: string; answer: string; source?: string; confidence?: number }>,
+): Promise<{ approved: number; bankSize: number }> {
+  const data = await apiFetch<{ approved: number; bankSize: number }>(
+    `/runs/${runId}/screening-answers/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    },
+  );
+  return data;
 }

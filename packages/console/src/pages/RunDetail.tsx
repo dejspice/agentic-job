@@ -4,8 +4,8 @@ import { Topbar } from "../components/Topbar";
 import { StatusBadge } from "../components/StatusBadge";
 import { RunTimeline } from "../components/RunTimeline";
 import { StateName } from "../types";
-import type { RunDetailView, RunStatus } from "../types";
-import { getRunDetail, approveRun, rejectRun, submitVerificationCode } from "../lib/api";
+import type { RunDetailView, RunStatus, ScreeningAnswerEntry } from "../types";
+import { getRunDetail, approveRun, rejectRun, submitVerificationCode, getRunScreeningAnswers, approveScreeningAnswers } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,6 +74,180 @@ function KVRow({ label, value }: { label: string; value: React.ReactNode }) {
       <span style={{ color: "#64748b", fontWeight: 500 }}>{label}</span>
       <span style={{ color: "#0f172a" }}>{value}</span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Screening Answers Review
+// ---------------------------------------------------------------------------
+
+const SOURCE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+  rule:              { label: "Rule",       color: "#1e40af", bg: "#dbeafe" },
+  answer_bank:       { label: "Bank",       color: "#7c2d12", bg: "#fed7aa" },
+  llm:               { label: "LLM",        color: "#6b21a8", bg: "#ede9fe" },
+  combobox_fallback: { label: "Fallback",   color: "#92400e", bg: "#fef3c7" },
+  prefilled:         { label: "Prefilled",  color: "#475569", bg: "#f1f5f9" },
+};
+
+function SourceBadge({ source }: { source: string }) {
+  const s = SOURCE_LABELS[source] ?? { label: source, color: "#475569", bg: "#f1f5f9" };
+  return (
+    <span style={{
+      display: "inline-block", padding: "1px 7px", borderRadius: 4,
+      fontSize: 10, fontWeight: 700, color: s.color, background: s.bg,
+    }}>
+      {s.label}
+    </span>
+  );
+}
+
+function ScreeningAnswersSection({
+  runId,
+  outcome,
+}: {
+  runId: string;
+  outcome: string | null;
+}) {
+  const [answers, setAnswers] = useState<ScreeningAnswerEntry[]>([]);
+  const [edits, setEdits] = useState<Record<number, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [approving, setApproving] = useState(false);
+  const [banner, setBanner] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    getRunScreeningAnswers(runId)
+      .then((data) => setAnswers(data.answers))
+      .finally(() => setLoading(false));
+  }, [runId]);
+
+  if (loading) {
+    return (
+      <SectionCard title="Screening Answers">
+        <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Loading…</p>
+      </SectionCard>
+    );
+  }
+
+  if (answers.length === 0) {
+    return (
+      <SectionCard title="Screening Answers">
+        <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>
+          No screening answers recorded for this run.
+        </p>
+      </SectionCard>
+    );
+  }
+
+  const isSuccessful = outcome === "SUBMITTED" || outcome === "VERIFICATION_REQUIRED";
+
+  function handleEdit(idx: number, newAnswer: string) {
+    setEdits((prev) => ({ ...prev, [idx]: newAnswer }));
+  }
+
+  async function handleApproveAll() {
+    setApproving(true);
+    setBanner(null);
+    try {
+      const toApprove = answers
+        .filter((a) => a.source !== "prefilled")
+        .map((a, idx) => ({
+          question: a.question,
+          answer: edits[idx] ?? a.answer,
+          source: edits[idx] !== undefined ? "manual" : a.source === "llm" ? "generated" : a.source,
+          confidence: edits[idx] !== undefined ? 1.0 : a.confidence,
+        }));
+      if (toApprove.length === 0) {
+        setBanner({ ok: false, msg: "No answers to approve (all prefilled)." });
+        return;
+      }
+      const result = await approveScreeningAnswers(runId, toApprove);
+      setBanner({ ok: true, msg: `${result.approved} answer(s) approved → bank now has ${result.bankSize} entries.` });
+      setEdits({});
+    } catch (e) {
+      setBanner({ ok: false, msg: `Failed: ${(e as Error).message}` });
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  return (
+    <SectionCard title="Screening Answers">
+      {banner && (
+        <div style={{
+          marginBottom: 12, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          background: banner.ok ? "#dcfce7" : "#fee2e2",
+          border: `1px solid ${banner.ok ? "#bbf7d0" : "#fecaca"}`,
+          color: banner.ok ? "#15803d" : "#b91c1c",
+          display: "flex", justifyContent: "space-between",
+        }}>
+          <span>{banner.msg}</span>
+          <button onClick={() => setBanner(null)} style={{
+            background: "none", border: "none", cursor: "pointer",
+            fontSize: 14, color: "inherit", padding: "0 4px",
+          }}>×</button>
+        </div>
+      )}
+
+      <div style={{ maxHeight: 400, overflowY: "auto" }}>
+        {answers.map((a, idx) => (
+          <div key={idx} style={{
+            padding: "10px 0", borderBottom: "1px solid #f1f5f9",
+            display: "flex", flexDirection: "column", gap: 4,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <SourceBadge source={a.source} />
+              <span style={{ fontSize: 12, color: "#64748b", flex: 1 }}>
+                {a.question}
+              </span>
+              <span style={{
+                fontSize: 10, color: "#94a3b8", fontFamily: "monospace",
+              }}>
+                {Math.round(a.confidence * 100)}%
+              </span>
+            </div>
+            {isSuccessful && a.source !== "prefilled" ? (
+              <input
+                type="text"
+                value={edits[idx] ?? a.answer}
+                onChange={(e) => handleEdit(idx, e.target.value)}
+                style={{
+                  fontSize: 13, padding: "4px 8px", border: "1px solid #e2e8f0",
+                  borderRadius: 6, color: "#0f172a", background: edits[idx] !== undefined ? "#fefce8" : "#ffffff",
+                  width: "100%", boxSizing: "border-box",
+                }}
+              />
+            ) : (
+              <span style={{ fontSize: 13, color: "#0f172a", paddingLeft: 2 }}>
+                {a.answer}
+              </span>
+            )}
+            {a.ruleName && (
+              <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace" }}>
+                rule: {a.ruleName}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {isSuccessful && (
+        <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+          <button
+            disabled={approving}
+            onClick={() => void handleApproveAll()}
+            style={{
+              flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 600,
+              borderRadius: 7, border: "none",
+              background: approving ? "#86efac" : "#16a34a",
+              color: "#ffffff", cursor: approving ? "not-allowed" : "pointer",
+            }}
+          >
+            {approving ? "Saving…" : `Approve ${answers.filter(a => a.source !== "prefilled").length} Answer(s) → Bank`}
+          </button>
+        </div>
+      )}
+    </SectionCard>
   );
 }
 
@@ -401,6 +575,9 @@ export function RunDetail() {
                 ))}
               </SectionCard>
             )}
+
+            {/* Screening Answers — review + approve */}
+            {runId && <ScreeningAnswersSection runId={runId} outcome={run.outcome} />}
           </div>
 
           {/* Right column: timeline + action panel + artifacts */}

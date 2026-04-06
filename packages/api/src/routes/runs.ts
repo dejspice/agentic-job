@@ -13,7 +13,8 @@ import type {
 import type { ApplyRun } from "@dejsol/core";
 import type { TemporalClientWrapper } from "../temporal-client.js";
 import type { PrismaClient } from "@prisma/client";
-import { queryVerificationRuns, computeKpiSnapshot } from "../persistence.js";
+import { queryVerificationRuns, computeKpiSnapshot, persistAnswerBank } from "../persistence.js";
+import type { AnswerBank, AnswerBankEntry } from "@dejsol/core";
 import type { KpiResponse } from "../types.js";
 
 export const runsRouter = Router();
@@ -295,6 +296,112 @@ runsRouter.get("/:id/status", async (req, res, next) => {
     const response: ApiResponse<RunStatusResponse> = {
       success: true,
       data: stub,
+    };
+    res.json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /api/runs/:id/screening-answers — Get structured screening answers for a run.
+ *
+ * Returns the answersJson column from apply_runs, which contains per-field
+ * structured answer entries logged during the screening state.
+ *
+ * Falls back to an empty object when DB is not wired or run is not found.
+ */
+runsRouter.get("/:id/screening-answers", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    if (prismaClient) {
+      const run = await prismaClient.applyRun.findUnique({
+        where: { id },
+        select: { answersJson: true, candidateId: true, outcome: true },
+      });
+      if (!run) throw ApiError.notFound("Run", id);
+      const response: ApiResponse<{ answersJson: unknown; candidateId: string; outcome: string | null }> = {
+        success: true,
+        data: {
+          answersJson: run.answersJson ?? {},
+          candidateId: run.candidateId,
+          outcome: run.outcome,
+        },
+      };
+      return res.json(response);
+    }
+
+    res.json({ success: true, data: { answersJson: {}, candidateId: "", outcome: null } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/runs/:id/screening-answers/approve — Approve (and optionally edit)
+ * screening answers, writing them into the candidate's answer bank.
+ *
+ * Body: { answers: Array<{ question, answer, source?, confidence? }> }
+ *
+ * Each approved answer is merged into candidates.answer_bank_json using
+ * persistAnswerBank. This is the operator-in-the-loop gate that converts
+ * run-level answers into reusable candidate knowledge.
+ */
+runsRouter.post("/:id/screening-answers/approve", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    if (!prismaClient) {
+      return res.json({
+        success: true,
+        data: { approved: 0 },
+        message: "DB not connected — answers not persisted.",
+      });
+    }
+
+    const run = await prismaClient.applyRun.findUnique({
+      where: { id },
+      select: { candidateId: true },
+    });
+    if (!run) throw ApiError.notFound("Run", id);
+
+    const body = req.body as {
+      answers: Array<{
+        question: string;
+        answer: string;
+        source?: string;
+        confidence?: number;
+      }>;
+    };
+
+    if (!body.answers || !Array.isArray(body.answers) || body.answers.length === 0) {
+      throw ApiError.badRequest("answers array is required and must not be empty");
+    }
+
+    const bankEntries: AnswerBank = {};
+    for (const a of body.answers) {
+      const normKey = a.question.toLowerCase().replace(/[*:?\s]+/g, " ").trim();
+      const entry: AnswerBankEntry = {
+        question: a.question,
+        answer: a.answer,
+        source: (a.source === "rule" || a.source === "generated" || a.source === "captured" || a.source === "manual")
+          ? a.source
+          : "manual",
+        confidence: a.confidence ?? 1.0,
+        lastUsed: new Date().toISOString(),
+      };
+      bankEntries[normKey] = entry;
+    }
+
+    const merged = await persistAnswerBank(run.candidateId, bankEntries, prismaClient);
+
+    const response: ApiResponse<{ approved: number; bankSize: number }> = {
+      success: true,
+      data: { approved: body.answers.length, bankSize: Object.keys(merged).length },
+      message: `${body.answers.length} answer(s) approved and written to candidate answer bank.`,
     };
     res.json(response);
   } catch (err) {
