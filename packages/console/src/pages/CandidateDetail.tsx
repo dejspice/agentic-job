@@ -25,12 +25,13 @@ interface CandidateData {
   _count: { runs: number; jobs: number };
 }
 
-interface RunSummary {
+interface CandidateRun {
   id: string;
   outcome: string | null;
+  currentState: string | null;
   startedAt: string;
   completedAt: string | null;
-  currentState: string | null;
+  job?: { company: string; jobTitle: string; jobUrl: string };
 }
 
 async function fetchCandidate(id: string): Promise<CandidateData> {
@@ -38,6 +39,15 @@ async function fetchCandidate(id: string): Promise<CandidateData> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = (await res.json()) as { data: CandidateData };
   return json.data;
+}
+
+async function fetchCandidateRuns(candidateId: string): Promise<CandidateRun[]> {
+  try {
+    const res = await fetch(`/api/candidates/${candidateId}/runs`, { headers: { "Content-Type": "application/json" } });
+    if (!res.ok) return [];
+    const json = (await res.json()) as { data?: CandidateRun[] };
+    return json.data ?? [];
+  } catch { return []; }
 }
 
 async function updateCandidate(id: string, body: Record<string, string>): Promise<void> {
@@ -56,13 +66,7 @@ async function launchRun(candidateId: string, jobUrl: string, mode: string): Pro
   const res = await fetch("/api/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jobId: `manual-${Date.now()}`,
-      candidateId,
-      mode,
-      jobUrl,
-      atsType: "GREENHOUSE",
-    }),
+    body: JSON.stringify({ jobId: `manual-${Date.now()}`, candidateId, mode, jobUrl, atsType: "GREENHOUSE" }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { error?: string };
@@ -81,6 +85,101 @@ const INPUT: React.CSSProperties = {
 const LABEL: React.CSSProperties = {
   fontSize: 11, color: "#64748b", fontWeight: 600, display: "block", marginBottom: 3,
 };
+
+// ---------------------------------------------------------------------------
+// Activity Summary
+// ---------------------------------------------------------------------------
+
+function ActivitySummary({ runs, createdAt }: { runs: CandidateRun[]; createdAt: string }) {
+  const total = runs.length;
+  const submitted = runs.filter(r => r.outcome === "SUBMITTED").length;
+  const verify = runs.filter(r => r.outcome === "VERIFICATION_REQUIRED").length;
+  const failed = runs.filter(r => r.outcome === "FAILED").length;
+  const successCount = submitted + verify;
+  const successRate = total > 0 ? Math.round((successCount / total) * 100) : 0;
+
+  const lastRun = runs.length > 0 ? runs[0] : null;
+  const lastActivity = lastRun
+    ? new Date(lastRun.completedAt ?? lastRun.startedAt).toLocaleString()
+    : "No activity yet";
+
+  const recentCompanies = runs
+    .filter(r => r.job?.company)
+    .map(r => r.job!.company)
+    .filter((c, i, arr) => arr.indexOf(c) === i)
+    .slice(0, 5);
+
+  return (
+    <SectionCard title="Activity Summary">
+      {/* Outcome counters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {[
+          { label: "Total", n: total, color: "#0f172a", bg: "#f1f5f9" },
+          { label: "Submitted", n: submitted, color: "#16a34a", bg: "#dcfce7" },
+          { label: "Verify", n: verify, color: "#b45309", bg: "#fef3c7" },
+          { label: "Failed", n: failed, color: "#b91c1c", bg: "#fee2e2" },
+        ].map(s => (
+          <div key={s.label} style={{
+            flex: "1 1 0", padding: "10px 8px", borderRadius: 8,
+            background: s.bg, textAlign: "center",
+          }}>
+            <div style={{ fontSize: 20, fontWeight: 700, color: s.color }}>{s.n}</div>
+            <div style={{ fontSize: 10, color: s.color, fontWeight: 500 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Success rate bar */}
+      {total > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+            <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>Success Rate</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: successRate >= 80 ? "#16a34a" : successRate >= 50 ? "#b45309" : "#b91c1c" }}>
+              {successRate}%
+            </span>
+          </div>
+          <div style={{ height: 6, background: "#e2e8f0", borderRadius: 99, overflow: "hidden" }}>
+            <div style={{
+              width: `${successRate}%`, height: "100%", borderRadius: 99,
+              background: successRate >= 80 ? "#22c55e" : successRate >= 50 ? "#f59e0b" : "#ef4444",
+            }} />
+          </div>
+        </div>
+      )}
+
+      {/* Key facts */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+          <span style={{ color: "#64748b" }}>Last Activity</span>
+          <span style={{ color: "#0f172a", fontWeight: 500 }}>{lastActivity}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+          <span style={{ color: "#64748b" }}>Member Since</span>
+          <span style={{ color: "#0f172a", fontWeight: 500 }}>{new Date(createdAt).toLocaleDateString()}</span>
+        </div>
+        {recentCompanies.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, marginBottom: 4 }}>Recent Companies</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {recentCompanies.map(c => (
+                <span key={c} style={{
+                  display: "inline-block", padding: "2px 8px", borderRadius: 4,
+                  fontSize: 11, fontWeight: 500, background: "#f1f5f9", color: "#475569",
+                }}>
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Profile Editor
+// ---------------------------------------------------------------------------
 
 function ProfileEditor({ candidate, onSaved }: { candidate: CandidateData; onSaved: () => void }) {
   const p = candidate.profileJson;
@@ -147,7 +246,11 @@ function ProfileEditor({ candidate, onSaved }: { candidate: CandidateData; onSav
   );
 }
 
-function LaunchRunPanel({ candidateId }: { candidateId: string }) {
+// ---------------------------------------------------------------------------
+// Launch Run Panel
+// ---------------------------------------------------------------------------
+
+function LaunchRunPanel({ candidateId, onLaunched }: { candidateId: string; onLaunched: () => void }) {
   const [jobUrl, setJobUrl] = useState("");
   const [launching, setLaunching] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; msg: string; runId?: string } | null>(null);
@@ -162,8 +265,9 @@ function LaunchRunPanel({ candidateId }: { candidateId: string }) {
     setResult(null);
     try {
       const { runId } = await launchRun(candidateId, jobUrl.trim(), "FULL_AUTO");
-      setResult({ ok: true, msg: `Run started`, runId });
+      setResult({ ok: true, msg: "Run started", runId });
       setJobUrl("");
+      onLaunched();
     } catch (err) {
       setResult({ ok: false, msg: (err as Error).message });
     } finally {
@@ -174,7 +278,7 @@ function LaunchRunPanel({ candidateId }: { candidateId: string }) {
   return (
     <SectionCard title="Launch Run">
       <p style={{ margin: "0 0 12px", fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
-        Start a Greenhouse application for this candidate. Paste a job URL below.
+        Start a Greenhouse application for this candidate.
       </p>
       {result && (
         <div style={{
@@ -210,23 +314,9 @@ function LaunchRunPanel({ candidateId }: { candidateId: string }) {
   );
 }
 
-interface CandidateRun {
-  id: string;
-  outcome: string | null;
-  currentState: string | null;
-  startedAt: string;
-  completedAt: string | null;
-  job?: { company: string; jobTitle: string; jobUrl: string };
-}
-
-async function fetchCandidateRuns(candidateId: string): Promise<CandidateRun[]> {
-  try {
-    const res = await fetch(`/api/candidates/${candidateId}/runs`, { headers: { "Content-Type": "application/json" } });
-    if (!res.ok) return [];
-    const json = (await res.json()) as { data?: CandidateRun[] };
-    return json.data ?? [];
-  } catch { return []; }
-}
+// ---------------------------------------------------------------------------
+// Run History Table
+// ---------------------------------------------------------------------------
 
 function resolveRunStatus(run: CandidateRun): RunStatus {
   if (run.outcome) return run.outcome as RunStatus;
@@ -234,18 +324,7 @@ function resolveRunStatus(run: CandidateRun): RunStatus {
   return "QUEUED";
 }
 
-function RunHistory({ candidateId }: { candidateId: string }) {
-  const [runs, setRuns] = useState<CandidateRun[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchCandidateRuns(candidateId).then(setRuns).finally(() => setLoading(false));
-  }, [candidateId]);
-
-  const submitted = runs.filter(r => r.outcome === "SUBMITTED").length;
-  const verify = runs.filter(r => r.outcome === "VERIFICATION_REQUIRED").length;
-  const failed = runs.filter(r => r.outcome === "FAILED").length;
-
+function RunHistoryTable({ runs }: { runs: CandidateRun[] }) {
   const TH: React.CSSProperties = {
     padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 600,
     color: "#64748b", letterSpacing: "0.06em", textTransform: "uppercase",
@@ -256,63 +335,55 @@ function RunHistory({ candidateId }: { candidateId: string }) {
     borderBottom: "1px solid #f8fafc", verticalAlign: "middle",
   };
 
-  return (
-    <SectionCard title="Run History">
-      {/* Outcome counters */}
-      <div style={{ display: "flex", gap: 16, marginBottom: 14 }}>
-        {[
-          { label: "Submitted", n: submitted, color: "#16a34a" },
-          { label: "Verify", n: verify, color: "#b45309" },
-          { label: "Failed", n: failed, color: "#b91c1c" },
-          { label: "Total", n: runs.length, color: "#0f172a" },
-        ].map(s => (
-          <div key={s.label} style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.n}</div>
-            <div style={{ fontSize: 10, color: "#64748b" }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {loading ? (
-        <div style={{ padding: "16px 0", color: "#94a3b8", fontSize: 12 }}>Loading…</div>
-      ) : runs.length === 0 ? (
+  if (runs.length === 0) {
+    return (
+      <SectionCard title="Run History">
         <div style={{ padding: "16px 0", color: "#94a3b8", fontSize: 12 }}>No runs yet. Use the Launch Run panel to start one.</div>
-      ) : (
-        <div style={{ overflowX: "auto", maxHeight: 300, overflowY: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>{["Company / Job", "Status", "Date", ""].map(h => <th key={h} style={TH}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {runs.map(run => (
-                <tr key={run.id}>
-                  <td style={TD}>
-                    {run.job ? (
-                      <><span style={{ fontWeight: 500 }}>{run.job.company}</span><div style={{ fontSize: 11, color: "#64748b" }}>{run.job.jobTitle}</div></>
-                    ) : <span style={{ color: "#94a3b8" }}>—</span>}
-                  </td>
-                  <td style={TD}><StatusBadge status={resolveRunStatus(run)} size="sm" /></td>
-                  <td style={{ ...TD, fontSize: 11, color: "#64748b" }}>{new Date(run.startedAt).toLocaleDateString()}</td>
-                  <td style={TD}>
-                    <Link to={`/runs/${run.id}`} style={{ fontSize: 11, color: "#2563eb", textDecoration: "none", fontWeight: 500 }}>View →</Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      </SectionCard>
+    );
+  }
+
+  return (
+    <SectionCard title={`Run History (${runs.length})`}>
+      <div style={{ overflowX: "auto", maxHeight: 320, overflowY: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>{["Company / Job", "Status", "Date", ""].map(h => <th key={h} style={TH}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {runs.map(run => (
+              <tr key={run.id}>
+                <td style={TD}>
+                  {run.job ? (
+                    <><span style={{ fontWeight: 500 }}>{run.job.company}</span><div style={{ fontSize: 11, color: "#64748b" }}>{run.job.jobTitle}</div></>
+                  ) : <span style={{ color: "#94a3b8" }}>—</span>}
+                </td>
+                <td style={TD}><StatusBadge status={resolveRunStatus(run)} size="sm" /></td>
+                <td style={{ ...TD, fontSize: 11, color: "#64748b" }}>{new Date(run.startedAt).toLocaleDateString()}</td>
+                <td style={TD}>
+                  <Link to={`/runs/${run.id}`} style={{ fontSize: 11, color: "#2563eb", textDecoration: "none", fontWeight: 500 }}>View →</Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </SectionCard>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
 export function CandidateDetail() {
   const { candidateId } = useParams<{ candidateId: string }>();
   const [candidate, setCandidate] = useState<CandidateData | null>(null);
+  const [runs, setRuns] = useState<CandidateRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  function load() {
+  function loadCandidate() {
     if (!candidateId) return;
     setLoading(true);
     fetchCandidate(candidateId)
@@ -321,7 +392,12 @@ export function CandidateDetail() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, [candidateId]);
+  function loadRuns() {
+    if (!candidateId) return;
+    fetchCandidateRuns(candidateId).then(setRuns);
+  }
+
+  useEffect(() => { loadCandidate(); loadRuns(); }, [candidateId]);
 
   if (loading) {
     return (
@@ -360,15 +436,17 @@ export function CandidateDetail() {
         }
       />
       <main style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
+        {/* Activity summary — full width above the two-column layout */}
+        <ActivitySummary runs={runs} createdAt={candidate.createdAt} />
+
         <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <ProfileEditor candidate={candidate} onSaved={load} />
-
-            {candidateId && <RunHistory candidateId={candidateId} />}
+            <ProfileEditor candidate={candidate} onSaved={loadCandidate} />
+            <RunHistoryTable runs={runs} />
           </div>
 
           <div style={{ width: 360, flexShrink: 0 }}>
-            <LaunchRunPanel candidateId={candidate.id} />
+            <LaunchRunPanel candidateId={candidate.id} onLaunched={loadRuns} />
           </div>
         </div>
       </main>
