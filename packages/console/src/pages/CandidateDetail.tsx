@@ -1,0 +1,293 @@
+import { useState, useEffect } from "react";
+import { useParams, Link } from "react-router-dom";
+import { Topbar } from "../components/Topbar";
+import { SectionCard } from "../components/SectionCard";
+
+interface CandidateProfile {
+  firstName?: string;
+  lastName?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  phone?: string;
+}
+
+interface CandidateData {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  profileJson: CandidateProfile;
+  createdAt: string;
+  updatedAt: string;
+  _count: { runs: number; jobs: number };
+}
+
+interface RunSummary {
+  id: string;
+  outcome: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  currentState: string | null;
+}
+
+async function fetchCandidate(id: string): Promise<CandidateData> {
+  const res = await fetch(`/api/candidates/${id}`, { headers: { "Content-Type": "application/json" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = (await res.json()) as { data: CandidateData };
+  return json.data;
+}
+
+async function updateCandidate(id: string, body: Record<string, string>): Promise<void> {
+  const res = await fetch(`/api/candidates/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+}
+
+async function launchRun(candidateId: string, jobUrl: string, mode: string): Promise<{ runId: string }> {
+  const res = await fetch("/api/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jobId: `manual-${Date.now()}`,
+      candidateId,
+      mode,
+      jobUrl,
+      atsType: "GREENHOUSE",
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  const json = (await res.json()) as { data: { id: string } };
+  return { runId: json.data.id };
+}
+
+const INPUT: React.CSSProperties = {
+  padding: "7px 10px", fontSize: 13, border: "1px solid #e2e8f0",
+  borderRadius: 6, color: "#0f172a", background: "#ffffff",
+  width: "100%", boxSizing: "border-box" as const,
+};
+
+const LABEL: React.CSSProperties = {
+  fontSize: 11, color: "#64748b", fontWeight: 600, display: "block", marginBottom: 3,
+};
+
+function ProfileEditor({ candidate, onSaved }: { candidate: CandidateData; onSaved: () => void }) {
+  const p = candidate.profileJson;
+  const [form, setForm] = useState({
+    firstName: p.firstName ?? candidate.name.split(" ")[0] ?? "",
+    lastName: p.lastName ?? candidate.name.split(" ").slice(1).join(" ") ?? "",
+    email: candidate.email,
+    phone: candidate.phone ?? p.phone ?? "",
+    city: p.city ?? "",
+    state: p.state ?? "",
+    country: p.country ?? "United States",
+  });
+  const [saving, setSaving] = useState(false);
+  const [banner, setBanner] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  function set(field: string, value: string) { setForm((f) => ({ ...f, [field]: value })); }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setBanner(null);
+    try {
+      await updateCandidate(candidate.id, form);
+      setBanner({ ok: true, msg: "Profile saved." });
+      onSaved();
+    } catch (err) {
+      setBanner({ ok: false, msg: (err as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <SectionCard title="Profile">
+      {banner && (
+        <div style={{
+          marginBottom: 12, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          background: banner.ok ? "#dcfce7" : "#fee2e2",
+          border: `1px solid ${banner.ok ? "#bbf7d0" : "#fecaca"}`,
+          color: banner.ok ? "#15803d" : "#b91c1c",
+        }}>
+          {banner.msg}
+        </div>
+      )}
+      <form onSubmit={(e) => void handleSave(e)}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <div><label style={LABEL}>First Name</label><input style={INPUT} value={form.firstName} onChange={(e) => set("firstName", e.target.value)} /></div>
+          <div><label style={LABEL}>Last Name</label><input style={INPUT} value={form.lastName} onChange={(e) => set("lastName", e.target.value)} /></div>
+          <div><label style={LABEL}>Email</label><input type="email" style={INPUT} value={form.email} onChange={(e) => set("email", e.target.value)} /></div>
+          <div><label style={LABEL}>Phone</label><input style={INPUT} value={form.phone} onChange={(e) => set("phone", e.target.value)} /></div>
+          <div><label style={LABEL}>City</label><input style={INPUT} value={form.city} onChange={(e) => set("city", e.target.value)} /></div>
+          <div><label style={LABEL}>State</label><input style={INPUT} value={form.state} onChange={(e) => set("state", e.target.value)} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={LABEL}>Country</label><input style={INPUT} value={form.country} onChange={(e) => set("country", e.target.value)} /></div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button type="submit" disabled={saving} style={{
+            padding: "7px 18px", fontSize: 13, fontWeight: 600, borderRadius: 7,
+            border: "none", background: saving ? "#93c5fd" : "#2563eb",
+            color: "#fff", cursor: saving ? "not-allowed" : "pointer",
+          }}>{saving ? "Saving…" : "Save Profile"}</button>
+        </div>
+      </form>
+    </SectionCard>
+  );
+}
+
+function LaunchRunPanel({ candidateId }: { candidateId: string }) {
+  const [jobUrl, setJobUrl] = useState("");
+  const [launching, setLaunching] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; msg: string; runId?: string } | null>(null);
+
+  async function handleLaunch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!jobUrl.trim() || !jobUrl.includes("greenhouse")) {
+      setResult({ ok: false, msg: "Enter a valid Greenhouse job URL." });
+      return;
+    }
+    setLaunching(true);
+    setResult(null);
+    try {
+      const { runId } = await launchRun(candidateId, jobUrl.trim(), "FULL_AUTO");
+      setResult({ ok: true, msg: `Run started`, runId });
+      setJobUrl("");
+    } catch (err) {
+      setResult({ ok: false, msg: (err as Error).message });
+    } finally {
+      setLaunching(false);
+    }
+  }
+
+  return (
+    <SectionCard title="Launch Run">
+      <p style={{ margin: "0 0 12px", fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+        Start a Greenhouse application for this candidate. Paste a job URL below.
+      </p>
+      {result && (
+        <div style={{
+          marginBottom: 12, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          background: result.ok ? "#dcfce7" : "#fee2e2",
+          border: `1px solid ${result.ok ? "#bbf7d0" : "#fecaca"}`,
+          color: result.ok ? "#15803d" : "#b91c1c",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <span>{result.msg}</span>
+          {result.runId && (
+            <Link to={`/runs/${result.runId}`} style={{ fontSize: 12, color: "#2563eb", fontWeight: 500, textDecoration: "none" }}>
+              View Run →
+            </Link>
+          )}
+        </div>
+      )}
+      <form onSubmit={(e) => void handleLaunch(e)} style={{ display: "flex", gap: 8 }}>
+        <input
+          type="url"
+          placeholder="https://job-boards.greenhouse.io/company/jobs/12345"
+          value={jobUrl}
+          onChange={(e) => setJobUrl(e.target.value)}
+          style={{ ...INPUT, flex: 1 }}
+        />
+        <button type="submit" disabled={launching} style={{
+          padding: "7px 16px", fontSize: 13, fontWeight: 600, borderRadius: 7,
+          border: "none", background: launching ? "#86efac" : "#16a34a",
+          color: "#fff", cursor: launching ? "not-allowed" : "pointer", flexShrink: 0,
+        }}>{launching ? "Launching…" : "Launch"}</button>
+      </form>
+    </SectionCard>
+  );
+}
+
+export function CandidateDetail() {
+  const { candidateId } = useParams<{ candidateId: string }>();
+  const [candidate, setCandidate] = useState<CandidateData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  function load() {
+    if (!candidateId) return;
+    setLoading(true);
+    fetchCandidate(candidateId)
+      .then(setCandidate)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { load(); }, [candidateId]);
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+        <Topbar title="Candidate" subtitle={candidateId} />
+        <main style={{ flex: 1, padding: "28px" }}>
+          <div style={{ height: 200, background: "#f1f5f9", borderRadius: 12 }} />
+        </main>
+      </div>
+    );
+  }
+
+  if (error || !candidate) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+        <Topbar title="Candidate" />
+        <main style={{ flex: 1, padding: "28px" }}>
+          <div style={{ background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "16px 20px", fontSize: 14, color: "#c2410c" }}>
+            {error ?? "Candidate not found."}{" "}
+            <Link to="/candidates" style={{ color: "#2563eb" }}>← Back</Link>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      <Topbar
+        title={candidate.name}
+        subtitle={candidate.email}
+        actions={
+          <Link to="/candidates" style={{ fontSize: 13, color: "#64748b", textDecoration: "none", padding: "6px 12px", border: "1px solid #e2e8f0", borderRadius: 6 }}>
+            ← Candidates
+          </Link>
+        }
+      />
+      <main style={{ flex: 1, padding: "28px", overflowY: "auto" }}>
+        <div style={{ display: "flex", gap: 20, alignItems: "flex-start" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <ProfileEditor candidate={candidate} onSaved={load} />
+
+            <SectionCard title="Stats">
+              <div style={{ display: "flex", gap: 24 }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#0f172a" }}>{candidate._count.runs}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>Runs</div>
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#0f172a" }}>{candidate._count.jobs}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>Jobs</div>
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>Since {new Date(candidate.createdAt).toLocaleDateString()}</div>
+                </div>
+              </div>
+            </SectionCard>
+          </div>
+
+          <div style={{ width: 360, flexShrink: 0 }}>
+            <LaunchRunPanel candidateId={candidate.id} />
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}

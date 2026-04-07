@@ -108,6 +108,26 @@ export interface CandidateListQuery {
   pageSize?: string;
 }
 
+export interface CreateCandidateBody {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+}
+
+export interface UpdateCandidateBody {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+}
+
 export type CandidateResponse = ApiResponse<Candidate>;
 export type CandidateListResponse = PaginatedResponse<Candidate>;
 

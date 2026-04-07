@@ -4,20 +4,19 @@ import { Dashboard } from "./pages/Dashboard";
 import { ReviewQueue } from "./pages/ReviewQueue";
 import { RunDetail } from "./pages/RunDetail";
 import { Candidates } from "./pages/Candidates";
+import { CandidateDetail } from "./pages/CandidateDetail";
 import { PolicyConfig } from "./pages/PolicyConfig";
 
 /**
  * Root application component.
  *
  * Route structure:
- *   /                 → Dashboard
- *   /review           → Review Queue
- *   /runs/:runId      → Run Detail
- *   /candidates       → Candidates list
- *   /policy           → Policy Config
- *
- * All routes are nested under AppShell, which renders the persistent
- * sidebar + layout wrapper.
+ *   /                          → Dashboard
+ *   /review                    → Review Queue
+ *   /runs/:runId               → Run Detail
+ *   /candidates                → Candidates list
+ *   /candidates/:candidateId   → Candidate detail (edit + launch)
+ *   /policy                    → Policy Config
  */
 export function App() {
   return (
@@ -28,8 +27,8 @@ export function App() {
           <Route path="review" element={<ReviewQueue />} />
           <Route path="runs/:runId" element={<RunDetail />} />
           <Route path="candidates" element={<Candidates />} />
+          <Route path="candidates/:candidateId" element={<CandidateDetail />} />
           <Route path="policy" element={<PolicyConfig />} />
-          {/* Catch-all: redirect unknown paths to the dashboard */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
