@@ -107,6 +107,32 @@ function SourceBadge({ source }: { source: string }) {
   );
 }
 
+function NoveltyBadge({ source }: { source: string }) {
+  if (source === "llm" || source === "combobox_fallback") {
+    return (
+      <span style={{
+        display: "inline-block", padding: "1px 5px", borderRadius: 4,
+        fontSize: 9, fontWeight: 800, letterSpacing: "0.05em",
+        color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca",
+      }}>
+        NEW
+      </span>
+    );
+  }
+  if (source === "answer_bank") {
+    return (
+      <span style={{
+        display: "inline-block", padding: "1px 5px", borderRadius: 4,
+        fontSize: 9, fontWeight: 800, letterSpacing: "0.05em",
+        color: "#16a34a", background: "#dcfce7", border: "1px solid #bbf7d0",
+      }}>
+        REUSED
+      </span>
+    );
+  }
+  return null;
+}
+
 function ConfidencePill({ confidence }: { confidence: number }) {
   const pct = Math.round(confidence * 100);
   const color = pct >= 95 ? "#16a34a" : pct >= 80 ? "#b45309" : "#b91c1c";
@@ -168,6 +194,9 @@ function ScreeningAnswersSection({
 
   const srcCounts: Record<string, number> = {};
   for (const a of answers) { srcCounts[a.source] = (srcCounts[a.source] ?? 0) + 1; }
+  const newCount = answers.filter(a => a.source === "llm" || a.source === "combobox_fallback").length;
+  const reusedCount = answers.filter(a => a.source === "answer_bank").length;
+  const safeCount = answers.filter(a => a.source === "rule" || a.source === "prefilled").length;
 
   function toggleExclude(idx: number) {
     setExcluded((prev) => {
@@ -209,7 +238,7 @@ function ScreeningAnswersSection({
 
   return (
     <SectionCard title="Screening Answers">
-      {/* Source breakdown + review alert */}
+      {/* Source breakdown + novelty summary + review alert */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         {Object.entries(srcCounts).map(([src, n]) => (
           <span key={src} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
@@ -217,6 +246,16 @@ function ScreeningAnswersSection({
             <span style={{ fontSize: 11, color: "#64748b" }}>×{n}</span>
           </span>
         ))}
+        <span style={{ width: 1, height: 14, background: "#e2e8f0", flexShrink: 0 }} />
+        {safeCount > 0 && (
+          <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 600 }}>{safeCount} safe</span>
+        )}
+        {reusedCount > 0 && (
+          <span style={{ fontSize: 11, color: "#7c2d12", fontWeight: 600 }}>{reusedCount} reused</span>
+        )}
+        {newCount > 0 && (
+          <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>{newCount} new</span>
+        )}
         {needsReview.length > 0 && (
           <span style={{
             marginLeft: "auto", fontSize: 11, fontWeight: 600,
@@ -276,6 +315,7 @@ function ScreeningAnswersSection({
                   />
                 )}
                 <SourceBadge source={a.source} />
+                <NoveltyBadge source={a.source} />
                 <span style={{ fontSize: 12, color: "#64748b", flex: 1, lineHeight: 1.3 }}>
                   {a.question}
                 </span>
