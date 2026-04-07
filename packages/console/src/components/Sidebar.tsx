@@ -9,8 +9,9 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: "/",           label: "Dashboard",    icon: "◈", end: true },
-  { to: "/review",     label: "Review Queue", icon: "⊙" },
+  { to: "/runs",       label: "Run Queue",    icon: "▶" },
   { to: "/candidates", label: "Candidates",   icon: "◎" },
+  { to: "/review",     label: "Review Queue", icon: "⊙" },
   { to: "/policy",     label: "Policy Config", icon: "⚙" },
 ];
 

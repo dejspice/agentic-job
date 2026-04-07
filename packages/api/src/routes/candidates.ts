@@ -179,17 +179,27 @@ candidatesRouter.get("/:id/jobs", (req, res, next) => {
 
 /**
  * GET /api/candidates/:id/runs — List runs for a specific candidate.
+ *
+ * Returns the 20 most recent runs with job details, ordered by startedAt desc.
  */
-candidatesRouter.get("/:id/runs", (req, res, next) => {
+candidatesRouter.get("/:id/runs", async (req, res, next) => {
   try {
-    const { id: _candidateId } = req.params;
+    const { id } = req.params;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
 
-    // Stub: In production, query runs filtered by candidateId
-    const response: ApiResponse<unknown[]> = {
-      success: true,
-      data: [],
-    };
-    res.json(response);
+    if (prismaClient) {
+      const runs = await prismaClient.applyRun.findMany({
+        where: { candidateId: id },
+        include: {
+          job: { select: { company: true, jobTitle: true, jobUrl: true } },
+        },
+        orderBy: { startedAt: "desc" },
+        take: 20,
+      });
+      return res.json({ success: true, data: runs });
+    }
+
+    res.json({ success: true, data: [] });
   } catch (err) {
     next(err);
   }

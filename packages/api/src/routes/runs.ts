@@ -199,8 +199,11 @@ runsRouter.get("/verification-required", async (req, res, next) => {
 
 /**
  * GET /api/runs — List apply runs with optional filters.
+ *
+ * Query params: outcome, candidateId, page, pageSize.
+ * Includes candidate name and job company/title via relations.
  */
-runsRouter.get("/", (req, res, next) => {
+runsRouter.get("/", async (req, res, next) => {
   try {
     const query = req.query as RunListQuery;
     const page = parseInt(query.page ?? "1", 10);
@@ -210,16 +213,39 @@ runsRouter.get("/", (req, res, next) => {
       throw ApiError.badRequest(`Invalid outcome filter: ${query.outcome}`);
     }
 
-    // Stub: In production, query the database with filters
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    if (prismaClient) {
+      const where: Record<string, unknown> = {};
+      if (query.outcome) where.outcome = query.outcome;
+      if (query.candidateId) where.candidateId = query.candidateId;
+
+      const [runs, total] = await Promise.all([
+        prismaClient.applyRun.findMany({
+          where,
+          include: {
+            candidate: { select: { name: true, email: true } },
+            job: { select: { company: true, jobTitle: true, jobUrl: true } },
+          },
+          orderBy: { startedAt: "desc" },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+        }),
+        prismaClient.applyRun.count({ where }),
+      ]);
+
+      const response = {
+        success: true,
+        data: runs,
+        pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+      };
+      return res.json(response);
+    }
+
     const response: RunListResponse = {
       success: true,
       data: [],
-      pagination: {
-        page,
-        pageSize,
-        total: 0,
-        totalPages: 0,
-      },
+      pagination: { page, pageSize, total: 0, totalPages: 0 },
     };
     res.json(response);
   } catch (err) {
@@ -228,13 +254,25 @@ runsRouter.get("/", (req, res, next) => {
 });
 
 /**
- * GET /api/runs/:id — Get a single apply run.
+ * GET /api/runs/:id — Get a single apply run with candidate and job details.
  */
-runsRouter.get("/:id", (req, res, next) => {
+runsRouter.get("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
 
-    // Stub: In production, look up by ID in the database
+    if (prismaClient) {
+      const run = await prismaClient.applyRun.findUnique({
+        where: { id },
+        include: {
+          candidate: { select: { name: true, email: true } },
+          job: { select: { company: true, jobTitle: true, jobUrl: true } },
+        },
+      });
+      if (!run) throw ApiError.notFound("Run", id);
+      return res.json({ success: true, data: run });
+    }
+
     throw ApiError.notFound("Run", id);
   } catch (err) {
     next(err);
