@@ -81,22 +81,43 @@ function KVRow({ label, value }: { label: string; value: React.ReactNode }) {
 // Screening Answers Review
 // ---------------------------------------------------------------------------
 
-const SOURCE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
-  rule:              { label: "Rule",       color: "#1e40af", bg: "#dbeafe" },
-  answer_bank:       { label: "Bank",       color: "#7c2d12", bg: "#fed7aa" },
-  llm:               { label: "LLM",        color: "#6b21a8", bg: "#ede9fe" },
-  combobox_fallback: { label: "Fallback",   color: "#92400e", bg: "#fef3c7" },
-  prefilled:         { label: "Prefilled",  color: "#475569", bg: "#f1f5f9" },
+const SOURCE_META: Record<string, { label: string; color: string; bg: string; risk: number }> = {
+  rule:              { label: "Rule",       color: "#1e40af", bg: "#dbeafe", risk: 0 },
+  answer_bank:       { label: "Bank",       color: "#7c2d12", bg: "#fed7aa", risk: 0 },
+  llm:               { label: "LLM",        color: "#6b21a8", bg: "#ede9fe", risk: 2 },
+  combobox_fallback: { label: "Fallback",   color: "#92400e", bg: "#fef3c7", risk: 1 },
+  prefilled:         { label: "Prefilled",  color: "#475569", bg: "#f1f5f9", risk: 0 },
 };
 
+function answerRisk(a: ScreeningAnswerEntry): number {
+  const base = SOURCE_META[a.source]?.risk ?? 0;
+  const confPenalty = a.confidence < 0.8 ? 2 : a.confidence < 0.95 ? 1 : 0;
+  return base + confPenalty;
+}
+
 function SourceBadge({ source }: { source: string }) {
-  const s = SOURCE_LABELS[source] ?? { label: source, color: "#475569", bg: "#f1f5f9" };
+  const s = SOURCE_META[source] ?? { label: source, color: "#475569", bg: "#f1f5f9" };
   return (
     <span style={{
       display: "inline-block", padding: "1px 7px", borderRadius: 4,
       fontSize: 10, fontWeight: 700, color: s.color, background: s.bg,
     }}>
       {s.label}
+    </span>
+  );
+}
+
+function ConfidencePill({ confidence }: { confidence: number }) {
+  const pct = Math.round(confidence * 100);
+  const color = pct >= 95 ? "#16a34a" : pct >= 80 ? "#b45309" : "#b91c1c";
+  const bg = pct >= 95 ? "#dcfce7" : pct >= 80 ? "#fef3c7" : "#fee2e2";
+  return (
+    <span style={{
+      display: "inline-block", padding: "1px 6px", borderRadius: 4,
+      fontSize: 10, fontWeight: 700, fontFamily: "monospace",
+      color, background: bg,
+    }}>
+      {pct}%
     </span>
   );
 }
@@ -110,6 +131,7 @@ function ScreeningAnswersSection({
 }) {
   const [answers, setAnswers] = useState<ScreeningAnswerEntry[]>([]);
   const [edits, setEdits] = useState<Record<number, string>>({});
+  const [excluded, setExcluded] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [approving, setApproving] = useState(false);
   const [banner, setBanner] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -140,30 +162,42 @@ function ScreeningAnswersSection({
   }
 
   const isSuccessful = outcome === "SUBMITTED" || outcome === "VERIFICATION_REQUIRED";
+  const approvable = answers.filter((a) => a.source !== "prefilled");
+  const needsReview = answers.filter((a) => answerRisk(a) >= 2);
+  const sorted = [...answers].sort((a, b) => answerRisk(b) - answerRisk(a));
 
-  function handleEdit(idx: number, newAnswer: string) {
-    setEdits((prev) => ({ ...prev, [idx]: newAnswer }));
+  const srcCounts: Record<string, number> = {};
+  for (const a of answers) { srcCounts[a.source] = (srcCounts[a.source] ?? 0) + 1; }
+
+  function toggleExclude(idx: number) {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
   }
 
-  async function handleApproveAll() {
+  async function handleApprove() {
     setApproving(true);
     setBanner(null);
     try {
-      const toApprove = answers
-        .filter((a) => a.source !== "prefilled")
-        .map((a, idx) => ({
+      const toApprove = approvable
+        .map((a, i) => ({ a, origIdx: answers.indexOf(a), i }))
+        .filter(({ origIdx }) => !excluded.has(origIdx))
+        .map(({ a, origIdx }) => ({
           question: a.question,
-          answer: edits[idx] ?? a.answer,
-          source: edits[idx] !== undefined ? "manual" : a.source === "llm" ? "generated" : a.source,
-          confidence: edits[idx] !== undefined ? 1.0 : a.confidence,
+          answer: edits[origIdx] ?? a.answer,
+          source: edits[origIdx] !== undefined ? "manual" : a.source === "llm" ? "generated" : a.source,
+          confidence: edits[origIdx] !== undefined ? 1.0 : a.confidence,
         }));
       if (toApprove.length === 0) {
-        setBanner({ ok: false, msg: "No answers to approve (all prefilled)." });
+        setBanner({ ok: false, msg: "All answers excluded — nothing to approve." });
         return;
       }
       const result = await approveScreeningAnswers(runId, toApprove);
       setBanner({ ok: true, msg: `${result.approved} answer(s) approved → bank now has ${result.bankSize} entries.` });
       setEdits({});
+      setExcluded(new Set());
     } catch (e) {
       setBanner({ ok: false, msg: `Failed: ${(e as Error).message}` });
     } finally {
@@ -171,8 +205,29 @@ function ScreeningAnswersSection({
     }
   }
 
+  const includedCount = approvable.filter((_, i) => !excluded.has(answers.indexOf(approvable[i]))).length;
+
   return (
     <SectionCard title="Screening Answers">
+      {/* Source breakdown + review alert */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        {Object.entries(srcCounts).map(([src, n]) => (
+          <span key={src} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+            <SourceBadge source={src} />
+            <span style={{ fontSize: 11, color: "#64748b" }}>×{n}</span>
+          </span>
+        ))}
+        {needsReview.length > 0 && (
+          <span style={{
+            marginLeft: "auto", fontSize: 11, fontWeight: 600,
+            color: "#b91c1c", background: "#fee2e2", padding: "2px 8px",
+            borderRadius: 4,
+          }}>
+            {needsReview.length} need{needsReview.length === 1 ? "s" : ""} review
+          </span>
+        )}
+      </div>
+
       {banner && (
         <div style={{
           marginBottom: 12, padding: "8px 12px", borderRadius: 6, fontSize: 12,
@@ -189,62 +244,90 @@ function ScreeningAnswersSection({
         </div>
       )}
 
-      <div style={{ maxHeight: 400, overflowY: "auto" }}>
-        {answers.map((a, idx) => (
-          <div key={idx} style={{
-            padding: "10px 0", borderBottom: "1px solid #f1f5f9",
-            display: "flex", flexDirection: "column", gap: 4,
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <SourceBadge source={a.source} />
-              <span style={{ fontSize: 12, color: "#64748b", flex: 1 }}>
-                {a.question}
-              </span>
-              <span style={{
-                fontSize: 10, color: "#94a3b8", fontFamily: "monospace",
-              }}>
-                {Math.round(a.confidence * 100)}%
-              </span>
+      <div style={{ maxHeight: 440, overflowY: "auto" }}>
+        {sorted.map((a) => {
+          const origIdx = answers.indexOf(a);
+          const risk = answerRisk(a);
+          const isExcluded = excluded.has(origIdx);
+          const rowBg = isExcluded ? "#f8fafc"
+            : risk >= 3 ? "#fef2f2"
+            : risk >= 2 ? "#fffbeb"
+            : "transparent";
+          const leftBorder = risk >= 3 ? "3px solid #ef4444"
+            : risk >= 2 ? "3px solid #f59e0b"
+            : "3px solid transparent";
+
+          return (
+            <div key={origIdx} style={{
+              padding: "10px 12px", borderBottom: "1px solid #f1f5f9",
+              display: "flex", flexDirection: "column", gap: 4,
+              background: rowBg, borderLeft: leftBorder,
+              opacity: isExcluded ? 0.45 : 1,
+              transition: "opacity 0.15s",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {isSuccessful && a.source !== "prefilled" && (
+                  <input
+                    type="checkbox"
+                    checked={!isExcluded}
+                    onChange={() => toggleExclude(origIdx)}
+                    title={isExcluded ? "Include in approval" : "Exclude from approval"}
+                    style={{ margin: 0, cursor: "pointer", accentColor: "#16a34a" }}
+                  />
+                )}
+                <SourceBadge source={a.source} />
+                <span style={{ fontSize: 12, color: "#64748b", flex: 1, lineHeight: 1.3 }}>
+                  {a.question}
+                </span>
+                <ConfidencePill confidence={a.confidence} />
+              </div>
+              {isSuccessful && a.source !== "prefilled" ? (
+                <input
+                  type="text"
+                  value={edits[origIdx] ?? a.answer}
+                  onChange={(e) => setEdits((prev) => ({ ...prev, [origIdx]: e.target.value }))}
+                  style={{
+                    fontSize: 13, padding: "5px 8px",
+                    border: risk >= 2 ? "1px solid #f59e0b" : "1px solid #e2e8f0",
+                    borderRadius: 6, color: "#0f172a",
+                    background: edits[origIdx] !== undefined ? "#fefce8" : "#ffffff",
+                    width: "100%", boxSizing: "border-box" as const,
+                  }}
+                />
+              ) : (
+                <span style={{ fontSize: 13, color: "#0f172a", paddingLeft: 2 }}>
+                  {a.answer}
+                </span>
+              )}
+              {a.ruleName && (
+                <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace" }}>
+                  rule: {a.ruleName}
+                </span>
+              )}
             </div>
-            {isSuccessful && a.source !== "prefilled" ? (
-              <input
-                type="text"
-                value={edits[idx] ?? a.answer}
-                onChange={(e) => handleEdit(idx, e.target.value)}
-                style={{
-                  fontSize: 13, padding: "4px 8px", border: "1px solid #e2e8f0",
-                  borderRadius: 6, color: "#0f172a", background: edits[idx] !== undefined ? "#fefce8" : "#ffffff",
-                  width: "100%", boxSizing: "border-box",
-                }}
-              />
-            ) : (
-              <span style={{ fontSize: 13, color: "#0f172a", paddingLeft: 2 }}>
-                {a.answer}
-              </span>
-            )}
-            {a.ruleName && (
-              <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace" }}>
-                rule: {a.ruleName}
-              </span>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {isSuccessful && (
-        <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+      {isSuccessful && approvable.length > 0 && (
+        <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
           <button
-            disabled={approving}
-            onClick={() => void handleApproveAll()}
+            disabled={approving || includedCount === 0}
+            onClick={() => void handleApprove()}
             style={{
               flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 600,
               borderRadius: 7, border: "none",
-              background: approving ? "#86efac" : "#16a34a",
-              color: "#ffffff", cursor: approving ? "not-allowed" : "pointer",
+              background: approving || includedCount === 0 ? "#d1d5db" : "#16a34a",
+              color: "#ffffff", cursor: approving || includedCount === 0 ? "not-allowed" : "pointer",
             }}
           >
-            {approving ? "Saving…" : `Approve ${answers.filter(a => a.source !== "prefilled").length} Answer(s) → Bank`}
+            {approving ? "Saving…" : `Approve ${includedCount} Answer(s) → Bank`}
           </button>
+          {excluded.size > 0 && (
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>
+              {excluded.size} excluded
+            </span>
+          )}
         </div>
       )}
     </SectionCard>
