@@ -23,6 +23,9 @@ export interface BatchRunResult {
   runId: string;
   jobUrl: string;
   candidate: string;
+  candidateEmail?: string;
+  company?: string;
+  jobTitle?: string;
   outcome: "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED" | "SKIPPED";
   durationMs: number;
   verificationRequired: boolean;
@@ -206,6 +209,9 @@ export async function runGoogleBatch(
         runId: randomUUID(),
         jobUrl: row.jobUrl,
         candidate: candidateName,
+        candidateEmail: row.email,
+        company: row.company,
+        jobTitle: row.jobTitle,
         outcome: "SKIPPED",
         durationMs,
         verificationRequired: false,
@@ -249,6 +255,9 @@ export async function runGoogleBatch(
         runId: randomUUID(),
         jobUrl: row.jobUrl,
         candidate: candidateName,
+        candidateEmail: row.email,
+        company: row.company,
+        jobTitle: row.jobTitle,
         outcome: "FAILED",
         durationMs,
         verificationRequired: false,
@@ -320,6 +329,9 @@ export async function runGoogleBatch(
       runId: appResult.runId,
       jobUrl: row.jobUrl,
       candidate: candidateName,
+      candidateEmail: row.email,
+      company: row.company,
+      jobTitle: row.jobTitle,
       outcome: appResult.outcome,
       durationMs,
       verificationRequired: appResult.verificationRequired,

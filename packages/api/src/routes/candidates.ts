@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { ApiError } from "../middleware/error-handler.js";
+import type { PrismaClient } from "@prisma/client";
 import type {
   CandidateListQuery,
   ApiResponse,
@@ -11,22 +12,35 @@ export const candidatesRouter = Router();
 /**
  * GET /api/candidates — List candidates.
  */
-candidatesRouter.get("/", (req, res, next) => {
+candidatesRouter.get("/", async (req, res, next) => {
   try {
     const query = req.query as CandidateListQuery;
     const page = parseInt(query.page ?? "1", 10);
     const pageSize = parseInt(query.pageSize ?? "20", 10);
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
 
-    // Stub: In production, query the database
+    if (prismaClient) {
+      const [candidates, total] = await Promise.all([
+        prismaClient.candidate.findMany({
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          orderBy: { createdAt: "desc" },
+          select: { id: true, name: true, email: true, phone: true, createdAt: true },
+        }),
+        prismaClient.candidate.count(),
+      ]);
+      const response: CandidateListResponse = {
+        success: true,
+        data: candidates as never,
+        pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+      };
+      return res.json(response);
+    }
+
     const response: CandidateListResponse = {
       success: true,
       data: [],
-      pagination: {
-        page,
-        pageSize,
-        total: 0,
-        totalPages: 0,
-      },
+      pagination: { page, pageSize, total: 0, totalPages: 0 },
     };
     res.json(response);
   } catch (err) {
@@ -37,11 +51,24 @@ candidatesRouter.get("/", (req, res, next) => {
 /**
  * GET /api/candidates/:id — Get a single candidate with profile details.
  */
-candidatesRouter.get("/:id", (req, res, next) => {
+candidatesRouter.get("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
 
-    // Stub: In production, look up by ID in the database
+    if (prismaClient) {
+      const candidate = await prismaClient.candidate.findUnique({
+        where: { id },
+        select: {
+          id: true, name: true, email: true, phone: true,
+          profileJson: true, createdAt: true, updatedAt: true,
+          _count: { select: { runs: true, jobs: true } },
+        },
+      });
+      if (!candidate) throw ApiError.notFound("Candidate", id);
+      return res.json({ success: true, data: candidate });
+    }
+
     throw ApiError.notFound("Candidate", id);
   } catch (err) {
     next(err);

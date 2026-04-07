@@ -35,11 +35,14 @@ import { loadCandidateProfile } from "./load-candidate.js";
 
 const DIVIDER = "─".repeat(45);
 
-function printHeader(total: number, mode: string): void {
+function printHeader(total: number, mode: string, candidateName?: string): void {
   console.log();
   console.log(`[DEMO] ${DIVIDER}`);
-  console.log(`[DEMO]  Greenhouse Apply — Batch Demo`);
+  console.log(`[DEMO]  Greenhouse Apply — Batch Runner`);
   console.log(`[DEMO]  Mode: ${mode}`);
+  if (candidateName) {
+    console.log(`[DEMO]  Candidate: ${candidateName}`);
+  }
   console.log(`[DEMO] ${DIVIDER}`);
   console.log(`[DEMO]  Loading ${total} job application(s)…`);
   console.log(`[DEMO] ${DIVIDER}`);
@@ -62,9 +65,12 @@ function printProgress(
     ? "SUBMITTED (verify)"
     : result.outcome;
   const duration = (result.durationMs / 1000).toFixed(1);
+  const label = result.company
+    ? `${result.candidate} → ${result.company}`
+    : result.candidate;
 
   console.log(
-    `[DEMO]  ${icon} [${completed}/${total}] ${result.candidate} — ${displayOutcome} (${duration}s)`,
+    `[DEMO]  ${icon} [${completed}/${total}] ${label} — ${displayOutcome} (${duration}s)`,
   );
 }
 
@@ -110,7 +116,7 @@ async function runLocalMode(): Promise<void> {
     process.exit(1);
   }
 
-  printHeader(rows.length, "local");
+  printHeader(rows.length, "local", undefined);
 
   const summary = await runBatch(rows, {
     artifactDir: resolve("./artifacts-batch"),
@@ -162,6 +168,8 @@ async function runGoogleMode(): Promise<void> {
   }
 
   const limit = parseInt(process.env["DEMO_LIMIT"] ?? "0", 10);
+  const dailyLimit = parseInt(process.env["DEMO_DAILY_LIMIT"] ?? "25", 10);
+
   if (limit > 0 && rows.length > limit) {
     console.log(`[DEMO] Found ${rows.length} pending row(s), limiting to ${limit} (DEMO_LIMIT).`);
     rows = rows.slice(0, limit);
@@ -169,11 +177,16 @@ async function runGoogleMode(): Promise<void> {
     console.log(`[DEMO] Found ${rows.length} pending row(s).`);
   }
 
+  if (dailyLimit > 0 && rows.length > dailyLimit) {
+    console.log(`[DEMO] ⚠ Daily safety limit: capping at ${dailyLimit} applications (DEMO_DAILY_LIMIT).`);
+    rows = rows.slice(0, dailyLimit);
+  }
+
   for (const r of rows.slice(0, 3)) {
     console.log(`[DEMO]   Row ${r.rowIndex}: ${r.company} — ${r.jobTitle} (${r.resumeId})`);
   }
 
-  printHeader(rows.length, "google");
+  printHeader(rows.length, "google", `${candidate.firstName} ${candidate.lastName} (${candidate.email})`);
 
   const summary = await runGoogleBatch(rows, {
     spreadsheetId,
