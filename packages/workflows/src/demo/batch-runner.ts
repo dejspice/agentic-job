@@ -35,6 +35,7 @@ export interface BatchRunResult {
 
 export interface BatchSummary {
   batchId: string;
+  candidateName?: string;
   startedAt: string;
   completedAt: string;
   totalJobs: number;
@@ -175,6 +176,7 @@ export async function runGoogleBatch(
     outputPath?: string;
     quiet?: boolean;
     headless?: boolean;
+    candidateName?: string;
     candidateProfile?: CandidateProfileFields;
     onProgress?: (completed: number, total: number, result: BatchRunResult) => void;
   },
@@ -374,7 +376,7 @@ export async function runGoogleBatch(
     }
   }
 
-  return finalizeBatch(batchId, startedAt, results, rows.length, outputPath);
+  return finalizeBatch(batchId, startedAt, results, rows.length, outputPath, options.candidateName);
 }
 
 function finalizeBatch(
@@ -383,6 +385,7 @@ function finalizeBatch(
   results: BatchRunResult[],
   totalJobs: number,
   outputPath: string,
+  candidateName?: string,
 ): BatchSummary {
   const completedAt = new Date().toISOString();
 
@@ -399,6 +402,7 @@ function finalizeBatch(
 
   const summary: BatchSummary = {
     batchId,
+    ...(candidateName ? { candidateName } : {}),
     startedAt,
     completedAt,
     totalJobs,

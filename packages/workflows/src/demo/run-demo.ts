@@ -27,6 +27,7 @@
  */
 
 import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
 import { readApplicationSheet } from "./sheet-reader.js";
 import { runBatch, runGoogleBatch } from "./batch-runner.js";
 import type { BatchRunResult, BatchSummary } from "./batch-runner.js";
@@ -34,6 +35,10 @@ import { readPendingRows } from "../connectors/sheet-reader.js";
 import { loadCandidateProfile } from "./load-candidate.js";
 
 const DIVIDER = "─".repeat(45);
+
+function candidateSlug(firstName: string, lastName: string): string {
+  return `${firstName}-${lastName}`.toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
+}
 
 function printHeader(total: number, mode: string, candidateName?: string): void {
   console.log();
@@ -74,9 +79,12 @@ function printProgress(
   );
 }
 
-function printSummary(summary: BatchSummary): void {
+function printSummary(summary: BatchSummary, outputFile: string): void {
   console.log();
   console.log(`[DEMO] ${DIVIDER}`);
+  if (summary.candidateName) {
+    console.log(`[DEMO]  Candidate:     ${summary.candidateName}`);
+  }
   console.log(`[DEMO]  Total jobs:    ${summary.totalJobs}`);
   console.log(`[DEMO]  Submitted:     ${summary.submitted}`);
   if (summary.verification > 0) {
@@ -88,7 +96,7 @@ function printSummary(summary: BatchSummary): void {
   }
   console.log(`[DEMO]  Success rate:  ${summary.successRate}`);
   console.log(`[DEMO] ${DIVIDER}`);
-  console.log(`[DEMO]  Results saved: artifacts-batch/run-results.json`);
+  console.log(`[DEMO]  Results saved: ${outputFile}`);
   console.log(`[DEMO] ${DIVIDER}`);
   console.log();
 }
@@ -118,14 +126,15 @@ async function runLocalMode(): Promise<void> {
 
   printHeader(rows.length, "local", undefined);
 
+  const outputFile = "artifacts-batch/run-results.json";
   const summary = await runBatch(rows, {
     artifactDir: resolve("./artifacts-batch"),
-    outputPath: resolve("./artifacts-batch/run-results.json"),
+    outputPath: resolve(`./${outputFile}`),
     quiet: true,
     onProgress: printProgress,
   });
 
-  printSummary(summary);
+  printSummary(summary, outputFile);
 }
 
 async function runGoogleMode(): Promise<void> {
@@ -186,14 +195,19 @@ async function runGoogleMode(): Promise<void> {
     console.log(`[DEMO]   Row ${r.rowIndex}: ${r.company} — ${r.jobTitle} (${r.resumeId})`);
   }
 
-  printHeader(rows.length, "google", `${candidate.firstName} ${candidate.lastName} (${candidate.email})`);
+  const fullName = `${candidate.firstName} ${candidate.lastName}`;
+  const slug = candidateSlug(candidate.firstName, candidate.lastName);
+  const outputFile = `artifacts-batch/run-results-${slug}.json`;
+
+  printHeader(rows.length, "google", `${fullName} (${candidate.email})`);
 
   const summary = await runGoogleBatch(rows, {
     spreadsheetId,
     sheetName,
     artifactDir: resolve("./artifacts-batch"),
-    outputPath: resolve("./artifacts-batch/run-results.json"),
+    outputPath: resolve(`./${outputFile}`),
     quiet: true,
+    candidateName: fullName,
     candidateProfile: {
       city: candidate.city,
       state: candidate.state,
@@ -202,7 +216,59 @@ async function runGoogleMode(): Promise<void> {
     onProgress: printProgress,
   });
 
-  printSummary(summary);
+  printSummary(summary, outputFile);
+}
+
+function printAggregateSummary(): void {
+  const dir = resolve("./artifacts-batch");
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter(f => f.startsWith("run-results-") && f.endsWith(".json"));
+  } catch {
+    return;
+  }
+  if (files.length < 2) return;
+
+  let totalJobs = 0, totalSubmitted = 0, totalVerify = 0, totalFailed = 0, totalSkipped = 0;
+  const candidates: string[] = [];
+
+  for (const f of files.sort()) {
+    try {
+      const data = JSON.parse(readFileSync(resolve(dir, f), "utf-8")) as BatchSummary;
+      totalJobs += data.totalJobs;
+      totalSubmitted += data.submitted;
+      totalVerify += data.verification;
+      totalFailed += data.failed;
+      totalSkipped += data.skipped;
+      if (data.candidateName) candidates.push(data.candidateName);
+    } catch {
+      // skip malformed files
+    }
+  }
+
+  const successRate = totalJobs > 0
+    ? `${Math.round(((totalSubmitted + totalVerify) / totalJobs) * 100)}%`
+    : "0%";
+
+  console.log();
+  console.log(`[DEMO] ${"═".repeat(45)}`);
+  console.log(`[DEMO]  AGGREGATE SUMMARY — ${files.length} batch(es)`);
+  if (candidates.length > 0) {
+    console.log(`[DEMO]  Candidates: ${candidates.join(", ")}`);
+  }
+  console.log(`[DEMO] ${"═".repeat(45)}`);
+  console.log(`[DEMO]  Total jobs:    ${totalJobs}`);
+  console.log(`[DEMO]  Submitted:     ${totalSubmitted}`);
+  if (totalVerify > 0) {
+    console.log(`[DEMO]  Verify:        ${totalVerify}`);
+  }
+  console.log(`[DEMO]  Failed:        ${totalFailed}`);
+  if (totalSkipped > 0) {
+    console.log(`[DEMO]  Skipped:       ${totalSkipped}`);
+  }
+  console.log(`[DEMO]  Success rate:  ${successRate}`);
+  console.log(`[DEMO] ${"═".repeat(45)}`);
+  console.log();
 }
 
 async function main(): Promise<void> {
@@ -210,6 +276,7 @@ async function main(): Promise<void> {
 
   if (source === "google") {
     await runGoogleMode();
+    printAggregateSummary();
   } else {
     await runLocalMode();
   }
