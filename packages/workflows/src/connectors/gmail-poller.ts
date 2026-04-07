@@ -130,7 +130,7 @@ export async function pollForVerificationCode(
 
     try {
       const afterEpoch = Math.floor((Date.now() - searchWindowMs) / 1000);
-      const query = `from:no-reply@us.greenhouse-mail.io subject:"Security code" after:${afterEpoch}`;
+      const query = `from:greenhouse-mail.io subject:"Security code" after:${afterEpoch}`;
 
       const listRes = await gmail.users.messages.list({
         userId: "me",
