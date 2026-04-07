@@ -235,9 +235,41 @@ function ScreeningAnswersSection({
   }
 
   const includedCount = approvable.filter((_, i) => !excluded.has(answers.indexOf(approvable[i]))).length;
+  const isSafeRun = newCount === 0 && answers.length > 0;
+  const [detailOpen, setDetailOpen] = useState(!isSafeRun);
 
   return (
     <SectionCard title="Screening Answers">
+      {/* Safe run banner */}
+      {isSafeRun && isSuccessful && !banner && (
+        <div style={{
+          marginBottom: 12, padding: "10px 14px", borderRadius: 8,
+          background: "#f0fdf4", border: "1px solid #bbf7d0",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+        }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d" }}>
+              Safe run — all answers from rules or bank
+            </div>
+            <div style={{ fontSize: 11, color: "#16a34a", marginTop: 2 }}>
+              {safeCount} safe{reusedCount > 0 ? `, ${reusedCount} reused from bank` : ""} — no LLM or fallback answers.
+            </div>
+          </div>
+          <button
+            disabled={approving || approvable.length === 0}
+            onClick={() => void handleApprove()}
+            style={{
+              padding: "6px 14px", fontSize: 12, fontWeight: 700, borderRadius: 6,
+              border: "none", background: approving ? "#86efac" : "#16a34a",
+              color: "#fff", cursor: approving ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap", flexShrink: 0,
+            }}
+          >
+            {approving ? "Saving…" : `Auto-approve ${approvable.length} → Bank`}
+          </button>
+        </div>
+      )}
+
       {/* Source breakdown + novelty summary + review alert */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         {Object.entries(srcCounts).map(([src, n]) => (
@@ -265,6 +297,15 @@ function ScreeningAnswersSection({
             {needsReview.length} need{needsReview.length === 1 ? "s" : ""} review
           </span>
         )}
+        {isSafeRun && (
+          <button onClick={() => setDetailOpen(v => !v)} style={{
+            marginLeft: needsReview.length > 0 ? 0 : "auto",
+            fontSize: 11, color: "#64748b", background: "none", border: "none",
+            cursor: "pointer", padding: 0, textDecoration: "underline",
+          }}>
+            {detailOpen ? "Collapse" : "Show details"}
+          </button>
+        )}
       </div>
 
       {banner && (
@@ -283,7 +324,7 @@ function ScreeningAnswersSection({
         </div>
       )}
 
-      <div style={{ maxHeight: 440, overflowY: "auto" }}>
+      {detailOpen && <div style={{ maxHeight: 440, overflowY: "auto" }}>
         {sorted.map((a) => {
           const origIdx = answers.indexOf(a);
           const risk = answerRisk(a);
@@ -347,9 +388,9 @@ function ScreeningAnswersSection({
             </div>
           );
         })}
-      </div>
+      </div>}
 
-      {isSuccessful && approvable.length > 0 && (
+      {detailOpen && isSuccessful && approvable.length > 0 && !isSafeRun && (
         <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
           <button
             disabled={approving || includedCount === 0}
