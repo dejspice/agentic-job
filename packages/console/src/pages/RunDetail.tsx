@@ -4,7 +4,7 @@ import { Topbar } from "../components/Topbar";
 import { StatusBadge } from "../components/StatusBadge";
 import { RunTimeline } from "../components/RunTimeline";
 import { StateName } from "../types";
-import type { RunDetailView, RunStatus, ScreeningAnswerEntry } from "../types";
+import type { RunDetailView, RunStatus, ScreeningAnswerEntry, ScreeningAdjudication } from "../types";
 import { getRunDetail, approveRun, rejectRun, submitVerificationCode, getRunScreeningAnswers, approveScreeningAnswers } from "../lib/api";
 
 // ---------------------------------------------------------------------------
@@ -145,6 +145,51 @@ function ConfidencePill({ confidence }: { confidence: number }) {
     }}>
       {pct}%
     </span>
+  );
+}
+
+const REC_STYLE: Record<string, { label: string; color: string; bg: string }> = {
+  auto_promote_to_answer_bank: { label: "Auto-promote", color: "#16a34a", bg: "#dcfce7" },
+  candidate_bank_only:         { label: "Candidate only", color: "#7c2d12", bg: "#fed7aa" },
+  human_review_required:       { label: "Needs review", color: "#b91c1c", bg: "#fee2e2" },
+  reject:                      { label: "Reject", color: "#991b1b", bg: "#fecaca" },
+  rule_candidate:              { label: "Rule candidate", color: "#1e40af", bg: "#dbeafe" },
+};
+
+function AdjudicationBadge({ adj }: { adj: ScreeningAdjudication }) {
+  const s = REC_STYLE[adj.recommendation] ?? { label: adj.recommendation, color: "#475569", bg: "#f1f5f9" };
+  return (
+    <span title={adj.reason} style={{
+      display: "inline-block", padding: "1px 6px", borderRadius: 4,
+      fontSize: 9, fontWeight: 700, color: s.color, background: s.bg,
+      cursor: "help",
+    }}>
+      {s.label}
+    </span>
+  );
+}
+
+function VisibleOptionsList({ options }: { options: string[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 2 }}>
+      <button onClick={() => setOpen(v => !v)} style={{
+        fontSize: 10, color: "#64748b", background: "none", border: "none",
+        cursor: "pointer", padding: 0, textDecoration: "underline",
+      }}>
+        {open ? "Hide options" : `View ${options.length} options`}
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4 }}>
+          {options.map((o, i) => (
+            <span key={i} style={{
+              fontSize: 10, padding: "1px 5px", borderRadius: 3,
+              background: "#f1f5f9", color: "#475569",
+            }}>{o}</span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -361,6 +406,7 @@ function ScreeningAnswersSection({
                   {a.question}
                 </span>
                 <ConfidencePill confidence={a.confidence} />
+                {a.adjudication && <AdjudicationBadge adj={a.adjudication} />}
               </div>
               {isSuccessful && a.source !== "prefilled" ? (
                 <input
@@ -379,6 +425,14 @@ function ScreeningAnswersSection({
                 <span style={{ fontSize: 13, color: "#0f172a", paddingLeft: 2 }}>
                   {a.answer}
                 </span>
+              )}
+              {a.adjudication && (
+                <span style={{ fontSize: 10, color: "#94a3b8", fontStyle: "italic" }}>
+                  {a.adjudication.reason}
+                </span>
+              )}
+              {a.visibleOptions && a.visibleOptions.length > 0 && (
+                <VisibleOptionsList options={a.visibleOptions} />
               )}
               {a.ruleName && (
                 <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace" }}>

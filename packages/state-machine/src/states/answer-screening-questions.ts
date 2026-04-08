@@ -10,6 +10,21 @@ import { pickBestOption } from "../screening/option-matcher.js";
 import type { AnswerGeneratorService } from "@dejsol/intelligence";
 import { matchAnswerBank } from "@dejsol/intelligence";
 
+export type AdjudicationRisk = "low" | "medium" | "high";
+export type PromotionRecommendation =
+  | "auto_promote_to_answer_bank"
+  | "candidate_bank_only"
+  | "human_review_required"
+  | "reject"
+  | "rule_candidate";
+
+export interface AdjudicationResult {
+  appropriatenessScore: number;
+  riskLevel: AdjudicationRisk;
+  recommendation: PromotionRecommendation;
+  reason: string;
+}
+
 /**
  * Structured record of a single screening answer produced during a run.
  * Persisted into context.data.screeningAnswers for downstream consumption
@@ -23,6 +38,8 @@ export interface ScreeningAnswerEntry {
   confidence: number;
   fieldType: string;
   selector: string;
+  visibleOptions?: string[];
+  adjudication?: AdjudicationResult;
 }
 
 /**
@@ -354,7 +371,7 @@ export const answerScreeningQuestionsState: StateHandler = {
             const winSel = `#react-select-${qId}-option-${yesMatch.index}`;
             await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
             answered.push(q.label);
-            record({ question: q.label, answer: yesMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector });
+            record({ question: q.label, answer: yesMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector, visibleOptions: opts });
             continue;
           }
           const noMatch = pickBestOption("No", opts);
@@ -362,7 +379,7 @@ export const answerScreeningQuestionsState: StateHandler = {
             const winSel = `#react-select-${qId}-option-${noMatch.index}`;
             await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
             answered.push(q.label);
-            record({ question: q.label, answer: noMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector });
+            record({ question: q.label, answer: noMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector, visibleOptions: opts });
             continue;
           }
         }

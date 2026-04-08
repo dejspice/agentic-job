@@ -25,6 +25,13 @@ export interface ScreeningAnswerRecord {
   source: string;
   ruleName?: string;
   confidence: number;
+  visibleOptions?: string[];
+  adjudication?: {
+    appropriatenessScore: number;
+    riskLevel: string;
+    recommendation: string;
+    reason: string;
+  };
 }
 
 export interface BatchRunResult {
@@ -342,6 +349,8 @@ export async function runGoogleBatch(
       source: a.source,
       ...(a.ruleName ? { ruleName: a.ruleName } : {}),
       confidence: a.confidence,
+      ...(a.visibleOptions ? { visibleOptions: a.visibleOptions } : {}),
+      ...(a.adjudication ? { adjudication: a.adjudication } : {}),
     }));
 
     const batchResult: BatchRunResult = {

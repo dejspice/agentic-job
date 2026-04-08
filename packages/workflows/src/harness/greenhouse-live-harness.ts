@@ -76,7 +76,14 @@ import { resolve } from "node:path";
 import { BrowserBroker, RuntimeProvider } from "@dejsol/browser-broker";
 import type { SessionRequirements, AllocatedSession } from "@dejsol/browser-broker";
 import { LocalFileArtifactStore } from "@dejsol/browser-worker";
-import { createAnswerGenerator, createClaudeProvider } from "@dejsol/intelligence";
+import {
+  createAnswerGenerator,
+  createClaudeProvider,
+  createAnswerAdjudicator,
+  createNoOpAdjudicator,
+  applyPolicy,
+} from "@dejsol/intelligence";
+import type { AdjudicationInput } from "@dejsol/intelligence";
 import type { AnswerBank } from "@dejsol/core";
 import type { ScreeningAnswerEntry } from "@dejsol/state-machine";
 import { pollForVerificationCode } from "../connectors/gmail-poller.js";
@@ -397,15 +404,69 @@ export async function runGreenhouseApplication(
       }
     }
 
-    // ── Answer bank write-back ──────────────────────────────────────
-    // After successful runs, merge high-confidence screening answers
-    // into the answer bank so they can be reused on future applications.
+    // ── Adjudicate NEW/risky answers ────────────────────────────────
     const rawAnswers = (data.screeningAnswers ?? result.data?.screeningAnswers) as ScreeningAnswerEntry[] | undefined;
+    if (rawAnswers && rawAnswers.length > 0 && (outcome === "SUBMITTED" || outcome === "VERIFICATION_REQUIRED")) {
+      const riskyAnswers = rawAnswers.filter(a => a.source === "llm" || a.source === "combobox_fallback");
+      if (riskyAnswers.length > 0) {
+        const adjudicator = anthropicKey
+          ? createAnswerAdjudicator(createClaudeProvider(anthropicKey))
+          : createNoOpAdjudicator();
+        const candidateBag = data.candidate as Record<string, string> | undefined;
+        const inputs: AdjudicationInput[] = riskyAnswers.map(a => ({
+          question: a.question,
+          answer: a.answer,
+          source: a.source,
+          confidence: a.confidence,
+          fieldType: a.fieldType,
+          visibleOptions: a.visibleOptions,
+          candidateName: candidateBag ? `${candidateBag.firstName ?? ""} ${candidateBag.lastName ?? ""}`.trim() : undefined,
+          candidateCity: candidateBag?.city,
+          candidateState: candidateBag?.state,
+          company: urlCompany,
+          runOutcome: outcome,
+        }));
+        try {
+          const adjResults = await adjudicator.adjudicateBatch(inputs);
+          for (let i = 0; i < riskyAnswers.length; i++) {
+            const llmRec = adjResults[i];
+            const policyResult = applyPolicy({
+              question: riskyAnswers[i].question,
+              answer: riskyAnswers[i].answer,
+              source: riskyAnswers[i].source,
+              confidence: riskyAnswers[i].confidence,
+              fieldType: riskyAnswers[i].fieldType,
+              visibleOptions: riskyAnswers[i].visibleOptions,
+              llmRecommendation: llmRec,
+            });
+            riskyAnswers[i].adjudication = {
+              appropriatenessScore: llmRec.appropriatenessScore,
+              riskLevel: policyResult.decision === "reject" ? "high"
+                : policyResult.decision === "human_review_required" ? "high"
+                : policyResult.decision === "candidate_bank_only" ? "medium"
+                : "low",
+              recommendation: policyResult.decision,
+              reason: policyResult.reason,
+            };
+          }
+        } catch (adjErr) {
+          console.log(`[ADJUDICATE] Error: ${adjErr instanceof Error ? adjErr.message : String(adjErr)}`);
+        }
+      }
+    }
+
+    // ── Answer bank write-back ──────────────────────────────────────
+    // After successful runs, merge answers into the bank.
+    // Policy-gated: only auto-promote answers whose adjudication allows it.
     let updatedBank: AnswerBank | undefined;
     if (rawAnswers && rawAnswers.length > 0 && (outcome === "SUBMITTED" || outcome === "VERIFICATION_REQUIRED")) {
       updatedBank = { ...inputAnswerBank };
       for (const entry of rawAnswers) {
-        if (entry.source === "prefilled" || entry.confidence < 0.7) continue;
+        if (entry.source === "prefilled") continue;
+        const adj = entry.adjudication;
+        if (adj && (adj.recommendation === "reject" || adj.recommendation === "human_review_required")) continue;
+        if (!adj && (entry.source === "llm" || entry.source === "combobox_fallback")) continue;
+        if (entry.confidence < 0.7) continue;
         const normKey = entry.question.toLowerCase().replace(/[*:?\s]+/g, " ").trim();
         const bankSource = entry.source === "rule" ? "rule" as const
           : entry.source === "llm" ? "generated" as const

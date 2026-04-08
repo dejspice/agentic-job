@@ -214,6 +214,13 @@ export interface RunErrorEntry {
   recoverable?: boolean;
 }
 
+export interface ScreeningAdjudication {
+  appropriatenessScore: number;
+  riskLevel: "low" | "medium" | "high";
+  recommendation: "auto_promote_to_answer_bank" | "candidate_bank_only" | "human_review_required" | "reject" | "rule_candidate";
+  reason: string;
+}
+
 export interface ScreeningAnswerEntry {
   question: string;
   answer: string;
@@ -222,6 +229,8 @@ export interface ScreeningAnswerEntry {
   confidence: number;
   fieldType: string;
   selector: string;
+  visibleOptions?: string[];
+  adjudication?: ScreeningAdjudication;
 }
 
 export interface RunDetailView {

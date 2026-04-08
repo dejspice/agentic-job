@@ -61,4 +61,9 @@ export {
   stateHandlers,
 } from "./states/index.js";
 
-export type { ScreeningAnswerEntry } from "./states/answer-screening-questions.js";
+export type {
+  ScreeningAnswerEntry,
+  AdjudicationResult,
+  AdjudicationRisk,
+  PromotionRecommendation,
+} from "./states/answer-screening-questions.js";
