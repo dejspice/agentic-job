@@ -19,6 +19,14 @@ import { writeRowResult } from "../connectors/sheet-writer.js";
 import type { WritebackStatus } from "../connectors/sheet-writer.js";
 import type { SheetApplicationRow } from "../connectors/sheet-reader.js";
 
+export interface ScreeningAnswerRecord {
+  question: string;
+  answer: string;
+  source: string;
+  ruleName?: string;
+  confidence: number;
+}
+
 export interface BatchRunResult {
   runId: string;
   jobUrl: string;
@@ -31,6 +39,7 @@ export interface BatchRunResult {
   verificationRequired: boolean;
   error?: string;
   sheetRowIndex?: number;
+  screeningAnswers?: ScreeningAnswerRecord[];
 }
 
 export interface BatchSummary {
@@ -327,6 +336,14 @@ export async function runGoogleBatch(
 
     const durationMs = Date.now() - start;
 
+    const screeningAnswers: ScreeningAnswerRecord[] | undefined = appResult.screeningAnswers?.map(a => ({
+      question: a.question,
+      answer: a.answer,
+      source: a.source,
+      ...(a.ruleName ? { ruleName: a.ruleName } : {}),
+      confidence: a.confidence,
+    }));
+
     const batchResult: BatchRunResult = {
       runId: appResult.runId,
       jobUrl: row.jobUrl,
@@ -339,6 +356,7 @@ export async function runGoogleBatch(
       verificationRequired: appResult.verificationRequired,
       sheetRowIndex: row.rowIndex,
       ...(appResult.error ? { error: appResult.error } : {}),
+      ...(screeningAnswers && screeningAnswers.length > 0 ? { screeningAnswers } : {}),
     };
 
     results.push(batchResult);
