@@ -59,6 +59,19 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   // ── Personal-info duplicates (screening-section variants) ────────────
   // Some boards (SmithRx) repeat name/address fields as screening questions.
   {
+    name: "preferred_name",
+    pattern: /^preferred\s*name$|^preferred\s*first\s*name$/i,
+    answer: { kind: "dataKey", path: "candidate.firstName", fallback: "N/A" },
+    interaction: "text",
+  },
+  {
+    name: "pronouns",
+    pattern: /^pronouns$/i,
+    answer: { kind: "dataKey", path: "candidate.pronouns", fallback: "He/Him" },
+    interaction: "react-select",
+    searchSeed: "He",
+  },
+  {
     name: "legal_first_name",
     pattern: /^legal\s*first\s*name$|^first\s*name$/i,
     answer: { kind: "dataKey", path: "candidate.firstName" },
@@ -220,7 +233,7 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   // Must be specific enough not to match "worked for Robinhood" with "Yes"
   {
     name: "worked_here_before",
-    pattern: /previously\s*employed|worked\s*.*before|former\s*employee|ever\s*worked\s*(for|at)\s*\w|ever\s*been\s*employed|employee.*intern.*contractor/i,
+    pattern: /previously\s*(been\s*)?employed|worked\s*.*before|former\s*employee|ever\s*worked\s*(for|at)\s*\w|ever\s*been\s*employed|employee.*intern.*contractor/i,
     answer: { kind: "dataKey", path: "candidate.workedHereBefore", fallback: "No" },
     interaction: "react-select",
     searchSeed: "never",
@@ -253,7 +266,7 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   // ── How did you hear about this role ─────────────────────────────────
   {
     name: "referral_source",
-    pattern: /how\s*did\s*you\s*hear|where\s*did\s*you\s*hear|how.*find.*role|how.*learn.*position|source.*application/i,
+    pattern: /how\s*did\s*you\s*hear|where\s*did\s*you\s*hear|how.*find.*role|how.*learn.*about|how.*first\s*learn|source.*application/i,
     answer: { kind: "literal", value: "Other" },
     interaction: "react-select",
     searchSeed: "Other",
