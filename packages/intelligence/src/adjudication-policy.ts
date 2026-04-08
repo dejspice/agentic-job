@@ -116,19 +116,6 @@ export function applyPolicy(input: PolicyInput): PolicyOutput {
     return { decision, reason: "High-risk question class — policy requires human review", llmAgreed: llmRec === decision };
   }
 
-  // Combobox fallback carve-out: combobox_fallback hardcodes confidence 0.5,
-  // but when the LLM adjudicator confirms the answer is appropriate (≥ 0.95)
-  // and the answer exists in the visible options, trust the LLM assessment.
-  if (source === "combobox_fallback" && llmRecommendation.appropriatenessScore >= 0.95
-      && visibleOptions && visibleOptions.length > 0) {
-    const normalized = visibleOptions.map(o => o.toLowerCase().trim());
-    const answerInOptions = normalized.some(o => o.includes(answer.toLowerCase().trim()) || answer.toLowerCase().trim().includes(o));
-    if (answerInOptions) {
-      const decision: PolicyDecision = llmRecommendation.riskLevel === "low" ? "auto_promote_to_answer_bank" : "candidate_bank_only";
-      return { decision, reason: `Combobox fallback verified by adjudicator (${Math.round(llmRecommendation.appropriatenessScore * 100)}%) — answer in options`, llmAgreed: llmRec === decision };
-    }
-  }
-
   if (confidence < 0.8) {
     return { decision: "human_review_required", reason: `Low confidence (${Math.round(confidence * 100)}%) — policy requires human review`, llmAgreed: llmRec === "human_review_required" };
   }
