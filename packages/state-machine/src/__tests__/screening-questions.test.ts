@@ -870,3 +870,160 @@ describe("answerScreeningQuestionsState — LLM fallback for unknown freeform", 
     assert.ok(skipped?.includes("Describe a recent product you shipped."), "Question should be skipped when no LLM is available");
   });
 });
+
+// ===========================================================================
+// EEO safety guard tests
+// ===========================================================================
+
+describe("answerScreeningQuestionsState — EEO safety guard", () => {
+  it("picks safe decline option for unmatched EEO combobox instead of Yes", async () => {
+    let clickedOption = "";
+
+    const ctx: StateContext = {
+      runId: "test-run",
+      jobId: "test-job",
+      candidateId: "test-cand",
+      jobUrl: "https://example.com",
+      currentState: StateName.ANSWER_SCREENING_QUESTIONS,
+      stateHistory: [],
+      data: { candidate: {} },
+      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true, durationMs: 0,
+            data: {
+              fields: [{
+                selector: "#veteran_status",
+                label: "Your protected veteran classification",
+                type: "text",
+                role: "combobox",
+                value: null,
+                required: true,
+              }],
+              count: 1,
+            },
+          };
+        }
+        if (cmd.type === "WAIT_FOR") {
+          const target = typeof cmd.target === "string" ? cmd.target : "";
+          if (target.includes("react-select") && target.includes("option")) return { success: true, durationMs: 0 };
+          return { success: target.includes("option"), durationMs: 0 };
+        }
+        if (cmd.type === "READ_TEXT") {
+          const sel = (cmd as { selector: string }).selector;
+          const optIdx = parseInt(sel.match(/option-(\d+)/)?.[1] ?? "-1");
+          const labels = [
+            "I am a protected veteran",
+            "I am not a protected veteran",
+            "Prefer not to answer",
+          ];
+          return { success: optIdx < labels.length, durationMs: 0, data: { text: labels[optIdx] ?? "" } };
+        }
+        if (cmd.type === "CLICK" && "target" in cmd && typeof cmd.target === "object" && "value" in cmd.target) {
+          clickedOption = cmd.target.value;
+        }
+        return { success: true, durationMs: 0 };
+      },
+    };
+
+    const result = await answerScreeningQuestionsState.execute(ctx);
+    assert.equal(result.outcome, "success");
+    assert.ok(clickedOption.includes("option-2"), `Should click 'Prefer not to answer' (option-2), clicked: ${clickedOption}`);
+  });
+
+  it("skips unmatched EEO combobox when no safe decline option exists", async () => {
+    const ctx: StateContext = {
+      runId: "test-run",
+      jobId: "test-job",
+      candidateId: "test-cand",
+      jobUrl: "https://example.com",
+      currentState: StateName.ANSWER_SCREENING_QUESTIONS,
+      stateHistory: [],
+      data: { candidate: {} },
+      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true, durationMs: 0,
+            data: {
+              fields: [{
+                selector: "#disability_status",
+                label: "Please select your status below",
+                type: "text",
+                role: "combobox",
+                value: null,
+                required: true,
+              }],
+              count: 1,
+            },
+          };
+        }
+        if (cmd.type === "WAIT_FOR") {
+          const target = typeof cmd.target === "string" ? cmd.target : "";
+          if (target.includes("react-select") && target.includes("option")) return { success: true, durationMs: 0 };
+          return { success: target.includes("option"), durationMs: 0 };
+        }
+        if (cmd.type === "READ_TEXT") {
+          const sel = (cmd as { selector: string }).selector;
+          const optIdx = parseInt(sel.match(/option-(\d+)/)?.[1] ?? "-1");
+          const labels = ["White", "Black or African American", "Asian", "Hispanic"];
+          return { success: optIdx < labels.length, durationMs: 0, data: { text: labels[optIdx] ?? "" } };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    };
+
+    const result = await answerScreeningQuestionsState.execute(ctx);
+    const skipped = (result.data as Record<string, unknown>)?.screeningSkipped as string[];
+    assert.ok(skipped?.includes("Please select your status below"), "EEO field with no safe option should be skipped");
+  });
+
+  it("non-EEO combobox still uses Yes/No fallback", async () => {
+    let clickedOption = "";
+    const ctx: StateContext = {
+      runId: "test-run",
+      jobId: "test-job",
+      candidateId: "test-cand",
+      jobUrl: "https://example.com",
+      currentState: StateName.ANSWER_SCREENING_QUESTIONS,
+      stateHistory: [],
+      data: { candidate: {} },
+      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true, durationMs: 0,
+            data: {
+              fields: [{
+                selector: "#question_99999",
+                label: "Are you comfortable working weekends?",
+                type: "text",
+                role: "combobox",
+                value: null,
+                required: true,
+              }],
+              count: 1,
+            },
+          };
+        }
+        if (cmd.type === "WAIT_FOR") {
+          const target = typeof cmd.target === "string" ? cmd.target : "";
+          if (target.includes("react-select") && target.includes("option")) return { success: true, durationMs: 0 };
+          return { success: target.includes("option"), durationMs: 0 };
+        }
+        if (cmd.type === "READ_TEXT") {
+          const sel = (cmd as { selector: string }).selector;
+          const optIdx = parseInt(sel.match(/option-(\d+)/)?.[1] ?? "-1");
+          const labels = ["Yes", "No"];
+          return { success: optIdx < labels.length, durationMs: 0, data: { text: labels[optIdx] ?? "" } };
+        }
+        if (cmd.type === "CLICK" && "target" in cmd && typeof cmd.target === "object" && "value" in cmd.target) {
+          clickedOption = cmd.target.value;
+        }
+        return { success: true, durationMs: 0 };
+      },
+    };
+
+    const result = await answerScreeningQuestionsState.execute(ctx);
+    assert.equal(result.outcome, "success");
+    assert.ok(clickedOption.includes("option-0"), `Non-EEO should click Yes (option-0), clicked: ${clickedOption}`);
+  });
+});

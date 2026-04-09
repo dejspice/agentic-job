@@ -264,6 +264,14 @@ export const answerScreeningQuestionsState: StateHandler = {
       "#gender", "#race", "#veteran_status", "#disability_status", "#hispanic_ethnicity",
     ]);
 
+    const EEO_SAFE_DECLINE_SEEDS = [
+      "prefer not to",
+      "decline",
+      "don't wish",
+      "do not wish",
+      "choose not",
+    ];
+
     const questions = allFields.filter(
       (f) => (f.selector.startsWith("#question_") && f.label)
         || (f.selector.match(/^\[id="\d+"\]$/) && f.label)
@@ -367,9 +375,33 @@ export const answerScreeningQuestionsState: StateHandler = {
 
       if (q.role === "combobox") {
         const qId = extractQuestionId(q.selector);
+        const isEeoField = GREENHOUSE_EEO_SELECTORS.has(q.selector);
         await context.execute({ type: "TYPE", selector: q.selector, value: "", sequential: true });
         await context.execute({ type: "WAIT_FOR", target: `[id^="react-select-${qId}-option"]`, timeoutMs: 1500 });
         const opts = await readVisibleOptions(context.execute, qId);
+
+        if (isEeoField && opts.length > 0) {
+          // EEO safety: prefer safe decline options over Yes/No to avoid
+          // submitting incorrect sensitive answers (e.g. "I am a veteran").
+          const normalizedOpts = opts.map(o => o.toLowerCase());
+          let safeIdx = -1;
+          for (const seed of EEO_SAFE_DECLINE_SEEDS) {
+            safeIdx = normalizedOpts.findIndex(o => o.includes(seed));
+            if (safeIdx >= 0) break;
+          }
+          if (safeIdx >= 0) {
+            const winSel = `#react-select-${qId}-option-${safeIdx}`;
+            await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
+            answered.push(q.label);
+            record({ question: q.label, answer: opts[safeIdx], source: "combobox_fallback", confidence: 0.3, fieldType: q.type, selector: q.selector, visibleOptions: opts });
+            continue;
+          }
+          // No safe option found — skip this EEO field rather than guess
+          await context.execute({ type: "TYPE", selector: q.selector, value: "", clearFirst: true });
+          skipped.push(q.label);
+          continue;
+        }
+
         if (opts.length > 0) {
           const yesMatch = pickBestOption("Yes", opts);
           if (yesMatch && yesMatch.score >= 50) {
