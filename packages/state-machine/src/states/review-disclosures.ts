@@ -266,10 +266,34 @@ export const reviewDisclosuresState: StateHandler = {
 
     // ── 1. Standard Greenhouse EEO fields ─────────────────────────────────
     // These fields (#gender, #hispanic_ethnicity, #veteran_status,
-    // #disability_status) are NOT required on Greenhouse forms.
-    // Skip them — only fill required fields.
+    // #disability_status) are optional on most Greenhouse forms but some
+    // boards make them required. Check if they exist and are unfilled,
+    // then fill them.
     for (const field of GREENHOUSE_STANDARD_EEO) {
-      skipped.push(field.label);
+      const exists = await context.execute({
+        type: "WAIT_FOR",
+        target: field.selector,
+        timeoutMs: 300,
+      });
+      if (!exists.success) {
+        skipped.push(field.label);
+        continue;
+      }
+
+      const desiredValue =
+        resolveDataKey(context.data, field.dataKey) ?? field.fallback;
+      const ok = await fillEeoDropdown(context, field.selector, desiredValue, field.searchSeed);
+      if (ok) {
+        filled.push(field.label);
+      } else {
+        skipped.push(field.label);
+      }
+
+      await context.execute({
+        type: "WAIT_FOR",
+        target: SETTLE_SELECTOR,
+        timeoutMs: INTER_DROPDOWN_SETTLE_MS,
+      });
     }
 
     // ── 2. Custom EEO fields by numeric ID (Robinhood, etc.) ──────────────
