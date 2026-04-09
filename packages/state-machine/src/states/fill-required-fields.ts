@@ -261,23 +261,32 @@ async function fillEducationAutocomplete(
 
   await execute({ type: "TYPE", selector, value: seed, sequential: true });
 
+  // Greenhouse education autocomplete uses a broader set of option selectors
+  // than standard React Select. The fieldId contains "--" which can break
+  // CSS attribute selectors, so we use multiple detection strategies.
   const OPTION_SELECTORS: readonly string[] = [
-    `[id^="react-select-${fieldId}-option"]`,
     "[id*='-option-']",
     "[role='option']",
     ".select__option",
+    `[id^="react-select-${fieldId}-option"]`,
+    "[class*='option']",
   ];
 
   let optionFound = false;
+  let matchedOptSel = "";
   for (const optSel of OPTION_SELECTORS) {
     const optWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 5000 });
-    if (optWait.success) { optionFound = true; break; }
+    if (optWait.success) { optionFound = true; matchedOptSel = optSel; break; }
   }
 
   if (!optionFound) return false;
 
-  // Read visible option labels
+  // Read visible option labels using multiple strategies:
+  // 1. Try field-specific react-select IDs
+  // 2. Fall back to generic [role='option'] / [id*='-option-'] enumeration
   const labels: string[] = [];
+
+  // Strategy 1: react-select specific IDs
   for (let idx = 0; idx < 20; idx++) {
     const optSel = `#react-select-${fieldId}-option-${idx}`;
     const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: idx === 0 ? 500 : 100 });
@@ -289,6 +298,21 @@ async function fillEducationAutocomplete(
     }
   }
 
+  // Strategy 2: if no field-specific options found, use EXTRACT_OPTIONS
+  if (labels.length === 0) {
+    const extractResult = await execute({ type: "EXTRACT_OPTIONS" });
+    if (extractResult.success && extractResult.data) {
+      const opts = (extractResult.data as Record<string, unknown>).options as string[] | undefined;
+      if (opts) labels.push(...opts);
+    }
+  }
+
+  // Strategy 3: click the first generic option directly if still no labels
+  if (labels.length === 0 && matchedOptSel) {
+    await execute({ type: "CLICK", target: { kind: "css", value: matchedOptSel } });
+    return true;
+  }
+
   if (labels.length === 0) return false;
 
   // Score options against the desired value, normalizing dashes/prepositions
@@ -296,16 +320,23 @@ async function fillEducationAutocomplete(
   const best = pickBestOption(normalizedValue, labels.map(l => l.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim()));
 
   if (best) {
+    // Try field-specific option ID first, fall back to generic nth-option
     const winSel = `#react-select-${fieldId}-option-${best.index}`;
-    await execute({ type: "CLICK", target: { kind: "css", value: winSel } });
-    return true;
+    const winExists = await execute({ type: "WAIT_FOR", target: winSel, timeoutMs: 300 });
+    if (winExists.success) {
+      await execute({ type: "CLICK", target: { kind: "css", value: winSel } });
+      return true;
+    }
+    // Generic click: re-read the matched option selector from detection phase
+    if (matchedOptSel) {
+      await execute({ type: "CLICK", target: { kind: "css", value: matchedOptSel } });
+      return true;
+    }
   }
 
-  // Fallback: click first option if no scoring match (better than nothing)
-  const firstOpt = `#react-select-${fieldId}-option-0`;
-  const firstExists = await execute({ type: "WAIT_FOR", target: firstOpt, timeoutMs: 500 });
-  if (firstExists.success) {
-    await execute({ type: "CLICK", target: { kind: "css", value: firstOpt } });
+  // Fallback: click first visible option element
+  if (matchedOptSel) {
+    await execute({ type: "CLICK", target: { kind: "css", value: matchedOptSel } });
     return true;
   }
 
