@@ -41,6 +41,13 @@ const GREENHOUSE_STANDARD_EEO: ReadonlyArray<{
     fallback: "No, I do not have a disability and have not had one in the past",
     searchSeed: "do not have",
   },
+  {
+    selector: "#race",
+    label: "Race / Ethnicity",
+    dataKey: "candidate.raceEthnicity",
+    fallback: "South Asian",
+    searchSeed: "South",
+  },
 ];
 
 const CUSTOM_EEO_PATTERNS: ReadonlyArray<{
