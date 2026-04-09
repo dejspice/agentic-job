@@ -339,6 +339,14 @@ export async function runGreenhouseApplication(
     for (const [k, v] of Object.entries(config.candidate)) {
       if (v && !candidateBag[k]) candidateBag[k] = v;
     }
+    // Education defaults — required by some Greenhouse boards
+    if (!candidateBag.school) candidateBag.school = "University of Texas at Dallas";
+    if (!candidateBag.degree) candidateBag.degree = "Bachelor's";
+    if (!candidateBag.discipline) candidateBag.discipline = "Computer Science";
+    if (!candidateBag.eduStartYear) candidateBag.eduStartYear = "2016";
+    if (!candidateBag.eduEndYear) candidateBag.eduEndYear = "2020";
+    if (!candidateBag.eduStartMonth) candidateBag.eduStartMonth = "August";
+    if (!candidateBag.eduEndMonth) candidateBag.eduEndMonth = "May";
 
     const urlCompany = input.jobUrl.match(/greenhouse\.io\/([^/]+)/)?.[1] ?? undefined;
 

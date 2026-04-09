@@ -108,6 +108,45 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
     required: false,
     interaction: "location-autocomplete",
   },
+
+  // ── Education section (Greenhouse standard) ────────────────────────
+  // Some boards require at least one education entry. The --0 suffix
+  // indicates the first (and usually only) education row.
+  {
+    selectors: ["#school--0", 'input[id="school--0"]'],
+    dataKey: "candidate.school",
+    required: false,
+  },
+  {
+    selectors: ["#degree--0", 'input[id="degree--0"]'],
+    dataKey: "candidate.degree",
+    required: false,
+  },
+  {
+    selectors: ["#discipline--0", 'input[id="discipline--0"]'],
+    dataKey: "candidate.discipline",
+    required: false,
+  },
+  {
+    selectors: ["#start-year--0", 'input[id="start-year--0"]'],
+    dataKey: "candidate.eduStartYear",
+    required: false,
+  },
+  {
+    selectors: ["#end-year--0", 'input[id="end-year--0"]'],
+    dataKey: "candidate.eduEndYear",
+    required: false,
+  },
+  {
+    selectors: ["#start-month--0", 'select[id="start-month--0"]'],
+    dataKey: "candidate.eduStartMonth",
+    required: false,
+  },
+  {
+    selectors: ["#end-month--0", 'select[id="end-month--0"]'],
+    dataKey: "candidate.eduEndMonth",
+    required: false,
+  },
 ];
 
 /**
