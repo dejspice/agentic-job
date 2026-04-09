@@ -343,19 +343,19 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   // seeds like "Male" filter to zero results.
   {
     name: "eeo_gender_identity",
-    pattern: /gender\s*identity|describe.*gender/i,
+    pattern: /^gender$|gender\s*identity|describe.*gender/i,
     answer: { kind: "dataKey", path: "candidate.gender", fallback: "Male" },
     interaction: "react-select",
   },
   {
     name: "eeo_race_ethnicity",
-    pattern: /race.*ethnicity|ethnicity.*race|racial.*background|ethnic.*background|describe.*racial/i,
+    pattern: /^race$|race.*ethnicity|ethnicity.*race|racial.*background|ethnic.*background|describe.*racial/i,
     answer: { kind: "dataKey", path: "candidate.raceEthnicity", fallback: "Asian" },
     interaction: "react-select",
   },
   {
     name: "eeo_military_status",
-    pattern: /military\s*status|armed\s*forces|served.*military/i,
+    pattern: /^veteran\s*status$|military\s*status|armed\s*forces|served.*military/i,
     answer: { kind: "dataKey", path: "candidate.veteranStatus", fallback: "I have never served in the military" },
     interaction: "react-select",
     searchSeed: "",

@@ -272,45 +272,13 @@ export const reviewDisclosuresState: StateHandler = {
     const skipped: string[] = [];
 
     // ── 1. Standard Greenhouse EEO fields ─────────────────────────────────
-    // These fields (#gender, #hispanic_ethnicity, #veteran_status,
-    // #disability_status) are optional on most Greenhouse forms but some
-    // boards make them required. Check if they exist and are unfilled,
-    // then fill them.
+    // Standard EEO fields (#gender, #hispanic_ethnicity, #veteran_status,
+    // #disability_status, #race) are now routed through
+    // ANSWER_SCREENING_QUESTIONS via the EEO selector allowlist + deterministic
+    // rules. REVIEW_DISCLOSURES only handles custom EEO fields (numeric IDs)
+    // and disclosure checkboxes.
     for (const field of GREENHOUSE_STANDARD_EEO) {
-      const exists = await context.execute({
-        type: "WAIT_FOR",
-        target: field.selector,
-        timeoutMs: 300,
-      });
-      if (!exists.success) {
-        skipped.push(field.label);
-        continue;
-      }
-
-      const desiredValue =
-        resolveDataKey(context.data, field.dataKey) ?? field.fallback;
-
-      // Try React Select combobox first, then native <select> fallback
-      let ok = await fillEeoDropdown(context, field.selector, desiredValue, field.searchSeed);
-      if (!ok) {
-        const selectResult = await context.execute({
-          type: "SELECT",
-          selector: field.selector,
-          value: desiredValue,
-        });
-        ok = selectResult.success;
-      }
-      if (ok) {
-        filled.push(field.label);
-      } else {
-        skipped.push(field.label);
-      }
-
-      await context.execute({
-        type: "WAIT_FOR",
-        target: SETTLE_SELECTOR,
-        timeoutMs: INTER_DROPDOWN_SETTLE_MS,
-      });
+      skipped.push(field.label);
     }
 
     // ── 2. Custom EEO fields by numeric ID (Robinhood, etc.) ──────────────

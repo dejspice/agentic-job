@@ -260,9 +260,14 @@ export const answerScreeningQuestionsState: StateHandler = {
 
     const allFields = (extractResult.data as Record<string, unknown>).fields as ExtractedQuestion[];
 
+    const GREENHOUSE_EEO_SELECTORS = new Set([
+      "#gender", "#race", "#veteran_status", "#disability_status", "#hispanic_ethnicity",
+    ]);
+
     const questions = allFields.filter(
-      (f) => f.selector.startsWith("#question_") && f.label
-        || (f.selector.match(/^\[id="\d+"\]$/) && f.label),
+      (f) => (f.selector.startsWith("#question_") && f.label)
+        || (f.selector.match(/^\[id="\d+"\]$/) && f.label)
+        || (GREENHOUSE_EEO_SELECTORS.has(f.selector) && f.label),
     );
 
     if (questions.length === 0) {

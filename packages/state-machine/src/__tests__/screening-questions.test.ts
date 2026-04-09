@@ -197,7 +197,43 @@ describe("matchScreeningQuestion — SmithRx-style patterns", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 1c. Worked-here-before phrasing variants
+// 1c. Greenhouse standard EEO bare-label matching
+// ---------------------------------------------------------------------------
+
+describe("matchScreeningQuestion — Greenhouse EEO bare labels", () => {
+  it("matches bare 'Gender' label", () => {
+    const result = matchScreeningQuestion("Gender", candidateData());
+    assert.equal(result.matched, true);
+    if (result.matched) assert.equal(result.rule.name, "eeo_gender_identity");
+  });
+
+  it("matches bare 'Race' label", () => {
+    const result = matchScreeningQuestion("Race", candidateData());
+    assert.equal(result.matched, true);
+    if (result.matched) assert.equal(result.rule.name, "eeo_race_ethnicity");
+  });
+
+  it("matches bare 'Veteran Status' label", () => {
+    const result = matchScreeningQuestion("Veteran Status", candidateData());
+    assert.equal(result.matched, true);
+    if (result.matched) assert.equal(result.rule.name, "eeo_military_status");
+  });
+
+  it("still matches 'Disability Status'", () => {
+    const result = matchScreeningQuestion("Disability Status", candidateData());
+    assert.equal(result.matched, true);
+    if (result.matched) assert.equal(result.rule.name, "eeo_disability_status");
+  });
+
+  it("still matches 'Hispanic/Latino'", () => {
+    const result = matchScreeningQuestion("Hispanic/Latino", candidateData());
+    assert.equal(result.matched, true);
+    if (result.matched) assert.equal(result.rule.name, "eeo_hispanic_latino");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1d. Worked-here-before phrasing variants
 // ---------------------------------------------------------------------------
 
 describe("matchScreeningQuestion — worked-here-before variants", () => {
