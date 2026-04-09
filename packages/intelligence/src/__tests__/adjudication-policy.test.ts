@@ -280,3 +280,54 @@ describe("existing policy behavior preserved", () => {
     assert.equal(result.decision, "reject");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Employer-history / worked-here-before — grounding guard
+// ---------------------------------------------------------------------------
+
+describe("employer-history questions are medium-risk", () => {
+  it("'Previously been an employee of X' combobox → human_review (medium-risk blocks carve-out, low confidence blocks fallback)", () => {
+    const result = applyPolicy(makeInput({
+      question: "Have you previously been an employee of NetDocuments?",
+      answer: "Yes",
+      source: "combobox_fallback",
+      confidence: 0.5,
+      visibleOptions: ["Yes", "No"],
+      llmRecommendation: makeLlm({ appropriatenessScore: 1.0, riskLevel: "low" }),
+    }));
+    assert.equal(result.decision, "human_review_required");
+  });
+
+  it("'Ever worked for X' combobox → human_review (same reason)", () => {
+    const result = applyPolicy(makeInput({
+      question: "Have you ever worked for Acme Corp?",
+      answer: "No",
+      source: "combobox_fallback",
+      confidence: 0.5,
+      visibleOptions: ["Yes", "No"],
+      llmRecommendation: makeLlm({ appropriatenessScore: 1.0, riskLevel: "low" }),
+    }));
+    assert.equal(result.decision, "human_review_required");
+  });
+
+  it("'Former employee' LLM with high confidence → capped to candidate_bank_only (medium-risk)", () => {
+    const result = applyPolicy(makeInput({
+      question: "Are you a former employee of this company?",
+      answer: "No",
+      source: "llm",
+      confidence: 0.95,
+      llmRecommendation: makeLlm({ appropriatenessScore: 0.95, riskLevel: "low" }),
+    }));
+    assert.equal(result.decision, "candidate_bank_only");
+  });
+
+  it("'Worked here before' with rule source → still auto-promotes (deterministic)", () => {
+    const result = applyPolicy(makeInput({
+      question: "Have you worked here before?",
+      source: "rule",
+      confidence: 1.0,
+      llmRecommendation: makeLlm(),
+    }));
+    assert.equal(result.decision, "auto_promote_to_answer_bank");
+  });
+});

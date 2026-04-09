@@ -197,6 +197,58 @@ describe("matchScreeningQuestion — SmithRx-style patterns", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1c. Worked-here-before phrasing variants
+// ---------------------------------------------------------------------------
+
+describe("matchScreeningQuestion — worked-here-before variants", () => {
+  it("matches 'previously been an employee of X'", () => {
+    const result = matchScreeningQuestion(
+      "Have you previously been an employee of NetDocuments?",
+      candidateData(),
+    );
+    assert.equal(result.matched, true);
+    if (result.matched) {
+      assert.equal(result.rule.name, "worked_here_before");
+      assert.equal(result.value, "No");
+    }
+  });
+
+  it("matches 'previously been employed at X'", () => {
+    const result = matchScreeningQuestion(
+      "Have you previously been employed at Acme Corp for any length of time?",
+      candidateData(),
+    );
+    assert.equal(result.matched, true);
+    if (result.matched) {
+      assert.equal(result.rule.name, "worked_here_before");
+      assert.equal(result.value, "No");
+    }
+  });
+
+  it("matches 'ever been an employee of X'", () => {
+    const result = matchScreeningQuestion(
+      "Have you ever been an employee of this company?",
+      candidateData(),
+    );
+    assert.equal(result.matched, true);
+    if (result.matched) {
+      assert.equal(result.rule.name, "worked_here_before");
+    }
+  });
+
+  it("matches 'ever worked for X'", () => {
+    const result = matchScreeningQuestion(
+      "Have you ever worked for Affirm?",
+      candidateData(),
+    );
+    assert.equal(result.matched, true);
+    if (result.matched) {
+      assert.equal(result.rule.name, "worked_here_before");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. Unknown question → no_match
 // ---------------------------------------------------------------------------
 

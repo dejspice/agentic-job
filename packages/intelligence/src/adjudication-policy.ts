@@ -54,6 +54,7 @@ const MEDIUM_RISK_PATTERNS: RegExp[] = [
   /describe\s+(a\s+time|your|how)/i,
   /what\s+type\s+of\s+work/i,
   /experience\s+with|experience\s+in/i,
+  /previously\s*(been\s*)?(employed|an?\s*employee)|worked.*before|former\s*employee|ever\s*worked/i,
 ];
 
 const LOW_RISK_IDENTITY: RegExp[] = [

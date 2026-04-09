@@ -233,7 +233,7 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   // Must be specific enough not to match "worked for Robinhood" with "Yes"
   {
     name: "worked_here_before",
-    pattern: /previously\s*(been\s*)?employed|worked\s*.*before|former\s*employee|ever\s*worked\s*(for|at)\s*\w|ever\s*been\s*employed|employee.*intern.*contractor/i,
+    pattern: /previously\s*(been\s*)?(employed|an?\s*employee)|worked\s*.*before|former\s*employee|ever\s*worked\s*(for|at)\s*\w|ever\s*been\s*(employed|an?\s*employee)|employee.*intern.*contractor/i,
     answer: { kind: "dataKey", path: "candidate.workedHereBefore", fallback: "No" },
     interaction: "react-select",
     searchSeed: "never",
