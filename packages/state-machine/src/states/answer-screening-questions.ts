@@ -329,7 +329,14 @@ export const answerScreeningQuestionsState: StateHandler = {
             }
             resolvedSeed = typeof cur === "string" ? cur : undefined;
           }
-          const fillOk = await fillReactSelect(context.execute, selector, value, resolvedSeed);
+          let fillOk = false;
+          if (GREENHOUSE_EEO_SELECTORS.has(selector)) {
+            const selectResult = await context.execute({ type: "SELECT", selector, value });
+            fillOk = selectResult.success;
+          }
+          if (!fillOk) {
+            fillOk = await fillReactSelect(context.execute, selector, value, resolvedSeed);
+          }
           if (fillOk) {
             answered.push(q.label);
             record({ question: q.label, answer: value, source: "rule", ruleName: rule.name, confidence: 1.0, fieldType: q.type, selector });
