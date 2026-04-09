@@ -117,7 +117,7 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
     selectors: ["#school--0", 'input[id="school--0"]'],
     dataKey: "candidate.school",
     required: false,
-    interaction: "react-select",
+    interaction: "location-autocomplete",
   },
   {
     selectors: ["#degree--0", 'input[id="degree--0"]'],
@@ -238,6 +238,12 @@ async function fillLocationAutocomplete(
   return optionFound;
 }
 
+const MONTH_TO_NUMBER: Record<string, string> = {
+  january: "1", february: "2", march: "3", april: "4", may: "5", june: "6",
+  july: "7", august: "8", september: "9", october: "10", november: "11", december: "12",
+  jan: "1", feb: "2", mar: "3", apr: "4", jun: "6", jul: "7", aug: "8", sep: "9", oct: "10", nov: "11", dec: "12",
+};
+
 function resolveValue(
   data: Record<string, unknown>,
   dotPath: string,
@@ -298,12 +304,17 @@ export const fillRequiredFieldsState: StateHandler = {
         if (!checkResult.success) continue;
 
         if (field.interaction === "native-select") {
-          const selectResult = await context.execute({
-            type: "SELECT",
-            selector,
-            value,
-          });
-          if (selectResult.success) {
+          let selectOk = false;
+          const selectResult = await context.execute({ type: "SELECT", selector, value });
+          selectOk = selectResult.success;
+          if (!selectOk) {
+            const numericMonth = MONTH_TO_NUMBER[value.toLowerCase()];
+            if (numericMonth) {
+              const retryResult = await context.execute({ type: "SELECT", selector, value: numericMonth });
+              selectOk = retryResult.success;
+            }
+          }
+          if (selectOk) {
             filledFields.push(selector);
             filled = true;
             break;
