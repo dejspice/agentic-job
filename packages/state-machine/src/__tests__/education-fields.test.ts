@@ -75,12 +75,15 @@ describe("education fields — interaction types", () => {
     assert.ok(schoolType, "School should use sequential TYPE (education-autocomplete pattern)");
   });
 
-  it("school reads visible options before clicking", async () => {
+  it("school attempts semantic click or EXTRACT_OPTIONS for selection", async () => {
     const { ctx, commands } = makeEduContext(new Set(["#school--0", "#first_name", "#last_name", "#email"]));
     await fillRequiredFieldsState.execute(ctx);
 
-    const readTexts = commands.filter(c => c.type === "READ_TEXT");
-    assert.ok(readTexts.length >= 1, "Should READ_TEXT option labels for scoring");
+    const hasExtractOrSemantic = commands.some(c =>
+      c.type === "EXTRACT_OPTIONS" ||
+      (c.type === "CLICK" && "target" in c && typeof (c as Record<string, unknown>).target === "object" && ((c as Record<string, unknown>).target as Record<string, unknown>).kind === "semantic")
+    );
+    assert.ok(hasExtractOrSemantic, "Should use EXTRACT_OPTIONS or semantic click for school selection");
   });
 
   it("degree uses sequential TYPE (react-select pattern)", async () => {

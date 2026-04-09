@@ -259,99 +259,60 @@ async function fillEducationAutocomplete(
   const normalized = value.replace(/\b(at|the|of)\b/gi, "").replace(/\s+/g, " ").trim();
   const seed = normalized.substring(0, Math.min(normalized.length, 30));
 
+  // Type the seed and wait for the autocomplete menu to appear
   await execute({ type: "TYPE", selector, value: seed, sequential: true });
 
-  // Greenhouse education autocomplete uses a custom select component where
-  // options are plain divs inside a .select__menu container — no role="option"
-  // or react-select IDs. Detect the menu container first.
-  const OPTION_SELECTORS: readonly string[] = [
+  const MENU_SELECTORS: readonly string[] = [
     "[class*='select__menu']",
-    "[class*='select__menu-list']",
     "[id*='-option-']",
     "[role='option']",
     ".select__option",
+    "[role='listbox']",
   ];
 
-  let optionFound = false;
-  let matchedOptSel = "";
-  for (const optSel of OPTION_SELECTORS) {
-    const optWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 5000 });
-    if (optWait.success) { optionFound = true; matchedOptSel = optSel; break; }
+  let menuFound = false;
+  for (const sel of MENU_SELECTORS) {
+    const wait = await execute({ type: "WAIT_FOR", target: sel, timeoutMs: 5000 });
+    if (wait.success) { menuFound = true; break; }
   }
 
-  if (!optionFound) return false;
+  if (menuFound) {
+    // Try clicking by semantic label (text content match in the dropdown)
+    // This works for custom select components that render options as plain divs
+    const textClick = await execute({ type: "CLICK", target: { kind: "semantic", label: value } });
+    if (textClick.success) return true;
 
-  // Read visible option labels. The Greenhouse education autocomplete
-  // uses plain divs without IDs, so EXTRACT_OPTIONS is the primary strategy.
-  const labels: string[] = [];
-
-  // Strategy 1: EXTRACT_OPTIONS (works for custom select components)
-  const extractResult = await execute({ type: "EXTRACT_OPTIONS" });
-  if (extractResult.success && extractResult.data) {
-    const opts = (extractResult.data as Record<string, unknown>).options as string[] | undefined;
-    if (opts) labels.push(...opts);
-  }
-
-  // Strategy 2: react-select specific IDs (fallback for standard React Select)
-  if (labels.length === 0) {
-    for (let idx = 0; idx < 20; idx++) {
-      const optSel = `#react-select-${fieldId}-option-${idx}`;
-      const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: idx === 0 ? 500 : 100 });
-      if (!exists.success) break;
-      const textResult = await execute({ type: "READ_TEXT", selector: optSel });
-      if (textResult.success && textResult.data) {
-        const text = ((textResult.data as Record<string, unknown>).text as string ?? "").trim();
-        if (text) labels.push(text);
+    // Try EXTRACT_OPTIONS + scoring + semantic click
+    const extractResult = await execute({ type: "EXTRACT_OPTIONS" });
+    const opts = extractResult.success
+      ? ((extractResult.data as Record<string, unknown>)?.options as string[] ?? [])
+      : [];
+    if (opts.length > 0) {
+      const normalizedValue = value.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim();
+      const best = pickBestOption(normalizedValue, opts.map(l => l.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim()));
+      if (best) {
+        const optClick = await execute({ type: "CLICK", target: { kind: "semantic", label: opts[best.index] } });
+        if (optClick.success) return true;
       }
     }
-  }
 
-  // Strategy 3: click the first detected option element directly
-  if (labels.length === 0 && matchedOptSel) {
-    await execute({ type: "CLICK", target: { kind: "css", value: matchedOptSel } });
-    return true;
-  }
-
-  if (labels.length === 0) return false;
-
-  // Score options against the desired value, normalizing dashes/prepositions
-  const normalizedValue = value.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim();
-  const best = pickBestOption(normalizedValue, labels.map(l => l.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim()));
-
-  if (best) {
-    // Try field-specific react-select option ID
-    const winSel = `#react-select-${fieldId}-option-${best.index}`;
-    const winExists = await execute({ type: "WAIT_FOR", target: winSel, timeoutMs: 300 });
-    if (winExists.success) {
-      await execute({ type: "CLICK", target: { kind: "css", value: winSel } });
-      return true;
-    }
-    // Click by label text (works for custom select components without IDs)
-    const originalLabel = labels[best.index];
-    if (originalLabel) {
-      const textClick = await execute({ type: "CLICK", target: { kind: "semantic", label: originalLabel } });
-      if (textClick.success) return true;
-    }
-    // Generic click on the menu container
-    if (matchedOptSel) {
-      await execute({ type: "CLICK", target: { kind: "css", value: matchedOptSel } });
+    // Try react-select ID-based click
+    const firstOpt = `#react-select-${fieldId}-option-0`;
+    const firstExists = await execute({ type: "WAIT_FOR", target: firstOpt, timeoutMs: 500 });
+    if (firstExists.success) {
+      await execute({ type: "CLICK", target: { kind: "css", value: firstOpt } });
       return true;
     }
   }
 
-  // Fallback: click first visible option via semantic label
-  if (labels.length > 0) {
-    const textClick = await execute({ type: "CLICK", target: { kind: "semantic", label: labels[0] } });
-    if (textClick.success) return true;
-  }
+  // Last resort: clear, type full value, and press Tab to commit
+  await execute({ type: "TYPE", selector, value: "", clearFirst: true });
+  await execute({ type: "TYPE", selector, value, sequential: true });
+  // Brief wait for async suggestions, then Tab to accept the top suggestion
+  await execute({ type: "WAIT_FOR", target: "[class*='select__menu']", timeoutMs: 3000 });
+  await execute({ type: "TYPE", selector, value: "\t" });
 
-  // Last resort: click the menu container
-  if (matchedOptSel) {
-    await execute({ type: "CLICK", target: { kind: "css", value: matchedOptSel } });
-    return true;
-  }
-
-  return false;
+  return true;
 }
 
 const MONTH_TO_NUMBER: Record<string, string> = {
