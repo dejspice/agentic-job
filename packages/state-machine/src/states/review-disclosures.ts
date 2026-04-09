@@ -289,7 +289,17 @@ export const reviewDisclosuresState: StateHandler = {
 
       const desiredValue =
         resolveDataKey(context.data, field.dataKey) ?? field.fallback;
-      const ok = await fillEeoDropdown(context, field.selector, desiredValue, field.searchSeed);
+
+      // Try React Select combobox first, then native <select> fallback
+      let ok = await fillEeoDropdown(context, field.selector, desiredValue, field.searchSeed);
+      if (!ok) {
+        const selectResult = await context.execute({
+          type: "SELECT",
+          selector: field.selector,
+          value: desiredValue,
+        });
+        ok = selectResult.success;
+      }
       if (ok) {
         filled.push(field.label);
       } else {
