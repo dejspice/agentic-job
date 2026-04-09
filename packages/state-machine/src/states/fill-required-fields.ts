@@ -22,10 +22,11 @@ interface GreenhouseFieldDef {
    * Interaction strategy:
    *   "type"                  — plain text fill (default)
    *   "react-select"          — standard React Select combobox
+   *   "native-select"         — native HTML <select> dropdown
    *   "location-autocomplete" — async React Select that fetches suggestions
    *                             from a server endpoint (Greenhouse location)
    */
-  interaction?: "type" | "react-select" | "location-autocomplete";
+  interaction?: "type" | "react-select" | "native-select" | "location-autocomplete";
 }
 
 /**
@@ -116,16 +117,19 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
     selectors: ["#school--0", 'input[id="school--0"]'],
     dataKey: "candidate.school",
     required: false,
+    interaction: "react-select",
   },
   {
     selectors: ["#degree--0", 'input[id="degree--0"]'],
     dataKey: "candidate.degree",
     required: false,
+    interaction: "react-select",
   },
   {
     selectors: ["#discipline--0", 'input[id="discipline--0"]'],
     dataKey: "candidate.discipline",
     required: false,
+    interaction: "react-select",
   },
   {
     selectors: ["#start-year--0", 'input[id="start-year--0"]'],
@@ -141,11 +145,13 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
     selectors: ["#start-month--0", 'select[id="start-month--0"]'],
     dataKey: "candidate.eduStartMonth",
     required: false,
+    interaction: "native-select",
   },
   {
     selectors: ["#end-month--0", 'select[id="end-month--0"]'],
     dataKey: "candidate.eduEndMonth",
     required: false,
+    interaction: "native-select",
   },
 ];
 
@@ -290,6 +296,20 @@ export const fillRequiredFieldsState: StateHandler = {
           timeoutMs: waitMs,
         });
         if (!checkResult.success) continue;
+
+        if (field.interaction === "native-select") {
+          const selectResult = await context.execute({
+            type: "SELECT",
+            selector,
+            value,
+          });
+          if (selectResult.success) {
+            filledFields.push(selector);
+            filled = true;
+            break;
+          }
+          continue;
+        }
 
         if (field.interaction === "location-autocomplete") {
           const locFilled = await fillLocationAutocomplete(context.execute, selector, value);
