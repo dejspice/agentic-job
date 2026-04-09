@@ -1,6 +1,7 @@
 import { StateName } from "@dejsol/core";
 import type { StateHandler, StateContext, StateResult } from "../types.js";
 import type { CommandExecutor } from "../types.js";
+import { pickBestOption } from "../screening/option-matcher.js";
 
 interface GreenhouseFieldDef {
   /**
@@ -20,13 +21,13 @@ interface GreenhouseFieldDef {
   required: boolean;
   /**
    * Interaction strategy:
-   *   "type"                  — plain text fill (default)
-   *   "react-select"          — standard React Select combobox
-   *   "native-select"         — native HTML <select> dropdown
-   *   "location-autocomplete" — async React Select that fetches suggestions
-   *                             from a server endpoint (Greenhouse location)
+   *   "type"                     — plain text fill (default)
+   *   "react-select"             — standard React Select combobox
+   *   "native-select"            — native HTML <select> dropdown
+   *   "location-autocomplete"    — async React Select, clicks first suggestion
+   *   "education-autocomplete"   — async React Select, scores options before clicking
    */
-  interaction?: "type" | "react-select" | "native-select" | "location-autocomplete";
+  interaction?: "type" | "react-select" | "native-select" | "location-autocomplete" | "education-autocomplete";
 }
 
 /**
@@ -117,7 +118,7 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
     selectors: ["#school--0", 'input[id="school--0"]'],
     dataKey: "candidate.school",
     required: false,
-    interaction: "location-autocomplete",
+    interaction: "education-autocomplete",
   },
   {
     selectors: ["#degree--0", 'input[id="degree--0"]'],
@@ -145,13 +146,13 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
     selectors: ["#start-month--0", 'select[id="start-month--0"]'],
     dataKey: "candidate.eduStartMonth",
     required: false,
-    interaction: "native-select",
+    interaction: "react-select",
   },
   {
     selectors: ["#end-month--0", 'select[id="end-month--0"]'],
     dataKey: "candidate.eduEndMonth",
     required: false,
-    interaction: "native-select",
+    interaction: "react-select",
   },
 ];
 
@@ -238,6 +239,79 @@ async function fillLocationAutocomplete(
   return optionFound;
 }
 
+/**
+ * Fill a Greenhouse education autocomplete field (school, etc.).
+ *
+ * Unlike location-autocomplete which clicks the first suggestion,
+ * this reads all visible options and scores them against the desired
+ * value using pickBestOption. Handles differences like:
+ *   "University of Texas at Dallas" vs "University of Texas - Dallas"
+ */
+async function fillEducationAutocomplete(
+  execute: CommandExecutor,
+  selector: string,
+  value: string,
+): Promise<boolean> {
+  const fieldId = selector.replace(/^#/, "");
+
+  // Normalize the value: strip "at" and common noise so "University of Texas at Dallas"
+  // becomes a seed like "University of Texas Dallas" which returns relevant suggestions
+  const normalized = value.replace(/\b(at|the|of)\b/gi, "").replace(/\s+/g, " ").trim();
+  const seed = normalized.substring(0, Math.min(normalized.length, 30));
+
+  await execute({ type: "TYPE", selector, value: seed, sequential: true });
+
+  const OPTION_SELECTORS: readonly string[] = [
+    `[id^="react-select-${fieldId}-option"]`,
+    "[id*='-option-']",
+    "[role='option']",
+    ".select__option",
+  ];
+
+  let optionFound = false;
+  for (const optSel of OPTION_SELECTORS) {
+    const optWait = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 5000 });
+    if (optWait.success) { optionFound = true; break; }
+  }
+
+  if (!optionFound) return false;
+
+  // Read visible option labels
+  const labels: string[] = [];
+  for (let idx = 0; idx < 20; idx++) {
+    const optSel = `#react-select-${fieldId}-option-${idx}`;
+    const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: idx === 0 ? 500 : 100 });
+    if (!exists.success) break;
+    const textResult = await execute({ type: "READ_TEXT", selector: optSel });
+    if (textResult.success && textResult.data) {
+      const text = ((textResult.data as Record<string, unknown>).text as string ?? "").trim();
+      if (text) labels.push(text);
+    }
+  }
+
+  if (labels.length === 0) return false;
+
+  // Score options against the desired value, normalizing dashes/prepositions
+  const normalizedValue = value.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim();
+  const best = pickBestOption(normalizedValue, labels.map(l => l.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim()));
+
+  if (best) {
+    const winSel = `#react-select-${fieldId}-option-${best.index}`;
+    await execute({ type: "CLICK", target: { kind: "css", value: winSel } });
+    return true;
+  }
+
+  // Fallback: click first option if no scoring match (better than nothing)
+  const firstOpt = `#react-select-${fieldId}-option-0`;
+  const firstExists = await execute({ type: "WAIT_FOR", target: firstOpt, timeoutMs: 500 });
+  if (firstExists.success) {
+    await execute({ type: "CLICK", target: { kind: "css", value: firstOpt } });
+    return true;
+  }
+
+  return false;
+}
+
 const MONTH_TO_NUMBER: Record<string, string> = {
   january: "1", february: "2", march: "3", april: "4", may: "5", june: "6",
   july: "7", august: "8", september: "9", october: "10", november: "11", december: "12",
@@ -315,6 +389,16 @@ export const fillRequiredFieldsState: StateHandler = {
             }
           }
           if (selectOk) {
+            filledFields.push(selector);
+            filled = true;
+            break;
+          }
+          continue;
+        }
+
+        if (field.interaction === "education-autocomplete") {
+          const eduFilled = await fillEducationAutocomplete(context.execute, selector, value);
+          if (eduFilled) {
             filledFields.push(selector);
             filled = true;
             break;

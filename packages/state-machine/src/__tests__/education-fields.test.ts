@@ -12,6 +12,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { fillRequiredFieldsState } from "../states/fill-required-fields.js";
+import { scoreOption, pickBestOption } from "../screening/option-matcher.js";
 import type { StateContext } from "../types.js";
 import { StateName } from "@dejsol/core";
 import type { WorkerCommand, CommandResult } from "@dejsol/core";
@@ -64,14 +65,22 @@ function makeEduContext(
 }
 
 describe("education fields — interaction types", () => {
-  it("school uses sequential TYPE (location-autocomplete pattern)", async () => {
+  it("school uses sequential TYPE (education-autocomplete pattern)", async () => {
     const { ctx, commands } = makeEduContext(new Set(["#school--0", "#first_name", "#last_name", "#email"]));
     await fillRequiredFieldsState.execute(ctx);
 
     const schoolType = commands.find(
       c => c.type === "TYPE" && "selector" in c && (c as { selector: string }).selector === "#school--0" && "sequential" in c && (c as { sequential?: boolean }).sequential,
     );
-    assert.ok(schoolType, "School should use sequential TYPE (autocomplete pattern)");
+    assert.ok(schoolType, "School should use sequential TYPE (education-autocomplete pattern)");
+  });
+
+  it("school reads visible options before clicking", async () => {
+    const { ctx, commands } = makeEduContext(new Set(["#school--0", "#first_name", "#last_name", "#email"]));
+    await fillRequiredFieldsState.execute(ctx);
+
+    const readTexts = commands.filter(c => c.type === "READ_TEXT");
+    assert.ok(readTexts.length >= 1, "Should READ_TEXT option labels for scoring");
   });
 
   it("degree uses sequential TYPE (react-select pattern)", async () => {
@@ -94,54 +103,47 @@ describe("education fields — interaction types", () => {
     assert.ok(yearType, "Year should use plain TYPE with clearFirst");
   });
 
-  it("month fields use SELECT command", async () => {
+  it("month fields use react-select pattern (sequential TYPE)", async () => {
     const { ctx, commands } = makeEduContext(new Set(["#start-month--0", "#first_name", "#last_name", "#email"]));
     await fillRequiredFieldsState.execute(ctx);
 
-    const selectCmd = commands.find(
-      c => c.type === "SELECT" && "selector" in c && (c as { selector: string }).selector === "#start-month--0",
+    const monthType = commands.find(
+      c => c.type === "CLICK" && "target" in c && typeof (c as Record<string, unknown>).target === "object",
     );
-    assert.ok(selectCmd, "Month should use SELECT command");
+    assert.ok(monthType, "Month should use CLICK (react-select open + option click)");
   });
 });
 
-describe("education fields — month numeric fallback", () => {
-  it("tries numeric month value when text fails", async () => {
-    const selectAttempts: string[] = [];
+describe("education fields — school option scoring", () => {
+  it("scores 'University of Texas - Dallas' against 'University of Texas at Dallas'", () => {
+    const desired = "University of Texas at Dallas".replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim();
+    const option = "University of Texas - Dallas".replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim();
+    const score = scoreOption(desired, option);
+    assert.ok(score >= 70, `Expected score >= 70 for normalized match, got ${score}`);
+  });
 
-    const ctx: StateContext = {
-      runId: "test-run",
-      jobId: "test-job",
-      candidateId: "test-cand",
-      jobUrl: "https://example.com",
-      currentState: StateName.FILL_REQUIRED_FIELDS,
-      stateHistory: [],
-      data: {
-        candidate: {
-          firstName: "Test", lastName: "User", email: "test@example.com",
-          eduStartMonth: "August",
-        },
-      },
-      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
-        if (cmd.type === "WAIT_FOR") {
-          const target = typeof cmd.target === "string" ? cmd.target : "";
-          if (target === "#start-month--0") return { success: true, durationMs: 0 };
-          if (target === "#first_name" || target === "#last_name" || target === "#email") return { success: true, durationMs: 0 };
-          return { success: false, durationMs: 0 };
-        }
-        if (cmd.type === "SELECT") {
-          const val = (cmd as { value: string }).value;
-          selectAttempts.push(val);
-          return { success: val === "8", durationMs: 0 };
-        }
-        if (cmd.type === "TYPE") return { success: true, durationMs: 0 };
-        return { success: true, durationMs: 0 };
-      },
-    };
+  it("pickBestOption finds best school from Greenhouse-style options", () => {
+    const desired = "University of Texas Dallas";
+    const options = [
+      "University Texas Arlington",
+      "University Texas Austin",
+      "University Texas Dallas",
+      "University Texas El Paso",
+    ];
+    const best = pickBestOption(desired, options);
+    assert.ok(best, "Should find a match");
+    assert.equal(best.index, 2, `Should pick 'Dallas' variant, got index ${best.index}: ${best.label}`);
+  });
+});
 
+describe("education fields — month as react-select", () => {
+  it("month fields use sequential TYPE for react-select interaction", async () => {
+    const { ctx, commands } = makeEduContext(new Set(["#start-month--0", "#first_name", "#last_name", "#email"]));
     await fillRequiredFieldsState.execute(ctx);
 
-    assert.ok(selectAttempts.includes("August"), "Should try text 'August' first");
-    assert.ok(selectAttempts.includes("8"), "Should try numeric '8' as fallback");
+    const monthType = commands.find(
+      c => c.type === "TYPE" && "selector" in c && (c as { selector: string }).selector === "#start-month--0" && "sequential" in c,
+    );
+    assert.ok(monthType, "Month should use sequential TYPE for react-select");
   });
 });
