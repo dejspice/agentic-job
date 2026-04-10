@@ -254,10 +254,10 @@ async function fillEducationAutocomplete(
 ): Promise<boolean> {
   const fieldId = selector.replace(/^#/, "");
 
-  // Normalize the value: strip "at" and common noise so "University of Texas at Dallas"
-  // becomes a seed like "University of Texas Dallas" which returns relevant suggestions
-  const normalized = value.replace(/\b(at|the|of)\b/gi, "").replace(/\s+/g, " ").trim();
-  const seed = normalized.substring(0, Math.min(normalized.length, 30));
+  // Use the value directly as the seed — Greenhouse school search needs the
+  // full name (e.g. "University of Texas at Dallas") to find relevant results.
+  // Truncate to 40 chars to avoid overly long sequential typing.
+  const seed = value.substring(0, Math.min(value.length, 40));
 
   // Type the seed and wait for the autocomplete menu to appear
   await execute({ type: "TYPE", selector, value: seed, sequential: true });
