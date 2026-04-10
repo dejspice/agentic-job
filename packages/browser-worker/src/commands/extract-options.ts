@@ -24,6 +24,8 @@ export async function executeExtractOptions(
         '[id*="-option-"]',
         ".select__option",
         '[role="option"]',
+        ".select__menu-list > div",
+        ".select__menu div[class*='option']",
       ];
 
       function isVisible(el: any): boolean {
