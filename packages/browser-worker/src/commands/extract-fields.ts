@@ -58,24 +58,37 @@ export async function executeExtractFields(
 
           // React Select combobox inputs always have empty .value even when
           // an option is selected (React manages the state, not the DOM).
-          // Walk up the DOM to find the selected-value display element.
-          // Greenhouse uses both plain class names (.select__single-value)
-          // and CSS-modules hashed names (css-*-singleValue), so we query
-          // for both patterns.
+          // The selected text lives in a sibling element of the input's
+          // container.  Walk up to the value-container / control wrapper
+          // and query for the single-value display element.
+          //
+          // Greenhouse DOM structure (new Remix-based boards):
+          //   .select__value-container
+          //     .select__single-value   ← selected text here
+          //     .select__input-container
+          //       input[role=combobox]   ← el is here, value="" always
           let fieldValue = el.value || null;
           if (role === "combobox" && !fieldValue) {
-            const container = el.closest(".select__input-container")
-              ?? el.closest("[class*='select']");
-            const searchRoot = container?.closest("[class*='container']")
-              ?? container?.parentElement
-              ?? el.parentElement;
-            if (searchRoot) {
-              const singleValue =
-                searchRoot.querySelector(".select__single-value")
-                ?? searchRoot.querySelector("[class*='singleValue']")
-                ?? searchRoot.querySelector("[class*='single-value']");
-              if (singleValue) {
-                fieldValue = (singleValue.textContent ?? "").trim() || null;
+            const inputContainer = el.closest(".select__input-container");
+            const valueContainer = inputContainer
+              ? inputContainer.parentElement
+              : el.closest("[class*='value-container']")
+                ?? el.closest("[class*='ValueContainer']")
+                ?? el.parentElement?.parentElement;
+            const searchRoots = [
+              valueContainer,
+              valueContainer?.parentElement,
+              el.parentElement,
+            ];
+            for (const root of searchRoots) {
+              if (!root) continue;
+              const sv =
+                root.querySelector(".select__single-value")
+                ?? root.querySelector("[class*='singleValue']")
+                ?? root.querySelector("[class*='single-value']");
+              if (sv) {
+                const text = (sv.textContent ?? "").trim();
+                if (text) { fieldValue = text; break; }
               }
             }
           }
