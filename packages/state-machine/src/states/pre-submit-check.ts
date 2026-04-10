@@ -156,6 +156,50 @@ export const preSubmitCheckState: StateHandler = {
       }
     }
 
+    // ── Retry empty standard EEO combobox fields ───────────────────
+    // EEO fields (#gender, #race, etc.) are rendered lazily on some
+    // Greenhouse boards and may not exist when earlier states run.
+    // By PRE_SUBMIT_CHECK they are present — retry with fillReactSelect.
+    const EEO_FIELD_DEFAULTS: Record<string, { value: string; seed: string }> = {
+      "#gender": { value: "Male", seed: "Mal" },
+      "#race": { value: "Asian", seed: "Asian" },
+      "#hispanic_ethnicity": { value: "No", seed: "No" },
+      "#veteran_status": { value: "I am not a protected veteran", seed: "not a protected" },
+      "#disability_status": { value: "No, I do not have a disability and have not had one in the past", seed: "do not have" },
+    };
+    const emptyEeoFields = emptyRequired.filter(
+      (f) => f.role === "combobox" && EEO_FIELD_DEFAULTS[f.selector],
+    );
+
+    if (emptyEeoFields.length > 0 && context.execute) {
+      const candidate = context.data.candidate as Record<string, string> | undefined;
+      let anyFilled = false;
+
+      for (const field of emptyEeoFields) {
+        const defaults = EEO_FIELD_DEFAULTS[field.selector]!;
+        const value = candidate?.raceEthnicity && field.selector === "#race"
+          ? candidate.raceEthnicity
+          : candidate?.gender && field.selector === "#gender"
+            ? candidate.gender
+            : defaults.value;
+
+        const ok = await fillReactSelect(
+          context.execute, field.selector, value, defaults.seed,
+        );
+        if (ok) anyFilled = true;
+      }
+
+      if (anyFilled) {
+        const recheck = await context.execute({ type: "EXTRACT_FIELDS" });
+        if (recheck.success && recheck.data) {
+          const recheckFields = (recheck.data as Record<string, unknown>).fields as ExtractedField[];
+          emptyRequired = recheckFields.filter(
+            (f) => f.required && !f.value && f.type !== "file",
+          );
+        }
+      }
+    }
+
     // ── Retry unchecked required checkbox groups ─────────────────────
     // Group by name attribute (e.g. "question_XXX[]") and check the first
     // option in each unfilled group.
