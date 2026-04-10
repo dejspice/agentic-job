@@ -7,8 +7,7 @@ const GREENHOUSE_SUBMIT_SELECTORS =
 /**
  * Confirmation selectors for post-submit page detection.
  *
- * Expanded beyond the canonical Greenhouse classes to cover boards that use
- * alternate confirmation element names or flash notice patterns.
+ * Covers legacy Greenhouse classes and new Remix-based board patterns.
  */
 const CONFIRMATION_CSS_SELECTORS = [
   ".confirmation",
@@ -24,7 +23,6 @@ const CONFIRMATION_CSS_SELECTORS = [
   ".notice.success",
 ].join(", ");
 
-// Partial-text selectors (no quotes = substring match in Playwright)
 const CONFIRMATION_TEXT_SELECTORS = [
   "text=Thank you for applying",
   "text=Thank you for your interest",
@@ -33,32 +31,58 @@ const CONFIRMATION_TEXT_SELECTORS = [
   "text=application has been submitted",
   "text=We have received your application",
   "text=View more jobs at",
+  "text=Application submitted",
 ];
 
 /**
- * Selectors that indicate a verification-code challenge was presented.
- * Greenhouse sends an 8-character or 6-digit code to the applicant's email
- * when it detects potential bot behavior.  The form IS submitted — the
- * candidate just needs to enter the code to finalize.
+ * Verification/email challenge selectors — both code-entry and email-link
+ * variants.
  *
- * Robinhood and other boards render 8 separate single-character inputs with
- * no shared name/class — matched via page text instead.
+ * Greenhouse Remix boards show two patterns after submit:
+ *   1. Code entry: "Check your email" + "We sent a verification code" +
+ *      input field labeled "Verification code" + "Verify" button
+ *   2. Email link: "Verify your email address" + "We've sent a
+ *      verification email" — no input, user clicks link in their inbox
+ *
+ * Both indicate the application WAS submitted successfully.
  */
 const VERIFICATION_CHALLENGE_SELECTORS = [
   'input[name="security_code"]',
-  'input[placeholder*="code"]',
-  'input[aria-label*="code"]',
+  'input[placeholder*="code" i]',
+  'input[aria-label*="code" i]',
+  'input[aria-label*="Verification" i]',
   ".security-code",
   "#security_code",
 ].join(", ");
 
 const VERIFICATION_CHALLENGE_TEXT_SELECTORS = [
   "text=verification code was sent",
+  "text=We sent a verification code",
+  "text=Verification code",
+  "text=Verify your email",
+  "text=Check your email",
   "text=confirm you're a human",
   "text=Security code",
   "text=enter the 8-character code",
   "text=enter the 6-digit code",
+  "text=sent a verification email",
+  "text=verification email to",
 ];
+
+/**
+ * Detect whether the submit button has disappeared from the page.
+ * After Greenhouse Remix navigation, the form page is replaced entirely.
+ */
+async function submitButtonGone(
+  execute: NonNullable<import("../types.js").StateContext["execute"]>,
+): Promise<boolean> {
+  const check = await execute({
+    type: "WAIT_FOR",
+    target: GREENHOUSE_SUBMIT_SELECTORS,
+    timeoutMs: 500,
+  });
+  return !check.success;
+}
 
 export const submitState: StateHandler = {
   name: StateName.SUBMIT,
@@ -93,77 +117,75 @@ export const submitState: StateHandler = {
       return { outcome: "failure", error: clickResult.error ?? "Submit click failed" };
     }
 
-    // Try CSS selectors first, then Playwright text selectors
-    let waitResult = await context.execute({
+    // After clicking submit, Greenhouse Remix boards navigate to a new URL.
+    // Wait briefly for the navigation to settle before probing selectors.
+    await context.execute({ type: "WAIT_FOR", target: "body", timeoutMs: 8000 });
+
+    // ── Strategy 1: confirmation page (direct success) ────────────────
+    let confirmed = await context.execute({
       type: "WAIT_FOR",
       target: CONFIRMATION_CSS_SELECTORS,
-      timeoutMs: 5000,
+      timeoutMs: 3000,
     });
-    if (!waitResult.success) {
+    if (!confirmed.success) {
       for (const textSel of CONFIRMATION_TEXT_SELECTORS) {
-        const textWait = await context.execute({
-          type: "WAIT_FOR",
-          target: textSel,
-          timeoutMs: 5000,
+        const tw = await context.execute({
+          type: "WAIT_FOR", target: textSel, timeoutMs: 2000,
         });
-        if (textWait.success) {
-          waitResult = textWait;
-          break;
-        }
+        if (tw.success) { confirmed = tw; break; }
       }
     }
 
-    // Always capture post-submit screenshot regardless of confirmation outcome —
-    // it is the permanent audit record that the submit button was activated.
     if (context.captureArtifact) {
       const ref = await context.captureArtifact("screenshot", "post-submit");
       context.data.artifacts = context.data.artifacts ?? [];
       (context.data.artifacts as unknown[]).push(ref);
     }
 
-    if (!waitResult.success) {
-      // Check for verification-code challenge.  When Greenhouse suspects
-      // automation it sends a code to the applicant's email rather than
-      // immediately showing a confirmation page.  The application IS
-      // submitted — it is simply gated behind the code entry.
-      // We return success with verificationRequired=true so the harness
-      // can log this as VERIFICATION_REQUIRED rather than a hard failure.
-      let verificationCheck = await context.execute({
-        type: "WAIT_FOR",
-        target: VERIFICATION_CHALLENGE_SELECTORS,
-        timeoutMs: 2000,
-      });
+    if (confirmed.success) {
+      context.data.submitted = true;
+      return { outcome: "success" };
+    }
 
-      if (!verificationCheck.success) {
-        for (const textSel of VERIFICATION_CHALLENGE_TEXT_SELECTORS) {
-          const textWait = await context.execute({
-            type: "WAIT_FOR",
-            target: textSel,
-            timeoutMs: 1500,
-          });
-          if (textWait.success) {
-            verificationCheck = textWait;
-            break;
-          }
-        }
+    // ── Strategy 2: verification challenge (code or email-link) ───────
+    let verificationFound = await context.execute({
+      type: "WAIT_FOR",
+      target: VERIFICATION_CHALLENGE_SELECTORS,
+      timeoutMs: 3000,
+    });
+
+    if (!verificationFound.success) {
+      for (const textSel of VERIFICATION_CHALLENGE_TEXT_SELECTORS) {
+        const tw = await context.execute({
+          type: "WAIT_FOR", target: textSel, timeoutMs: 1500,
+        });
+        if (tw.success) { verificationFound = tw; break; }
       }
+    }
 
-      if (verificationCheck.success) {
-        context.data.submitted = true;
-        context.data.verificationRequired = true;
-        return {
-          outcome: "success",
-          data: { verificationRequired: true },
-        };
-      }
-
+    if (verificationFound.success) {
+      context.data.submitted = true;
+      context.data.verificationRequired = true;
       return {
-        outcome: "failure",
-        error: "Confirmation page did not appear after submit",
+        outcome: "success",
+        data: { verificationRequired: true },
       };
     }
 
-    context.data.submitted = true;
-    return { outcome: "success" };
+    // ── Strategy 3: submit button gone (page navigated away from form) ─
+    // If the submit button no longer exists the form was accepted and the
+    // page navigated.  Treat as success — the confirmation might use a
+    // non-standard element we don't recognize yet.
+    const buttonGone = await submitButtonGone(context.execute);
+    if (buttonGone) {
+      context.data.submitted = true;
+      context.data.confirmationDetection = "submit-button-gone";
+      return { outcome: "success" };
+    }
+
+    return {
+      outcome: "failure",
+      error: "Confirmation page did not appear after submit",
+    };
   },
 };
