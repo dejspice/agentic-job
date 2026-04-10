@@ -290,6 +290,7 @@ export const answerScreeningQuestionsState: StateHandler = {
 
     const questions = allFields.filter(
       (f) => (f.selector.startsWith("#question_") && f.label)
+        || (f.selector.startsWith('[id="question_') && f.label)
         || (f.selector.match(/^\[id="\d+"\]$/) && f.label)
         || (GREENHOUSE_EEO_SELECTORS.has(f.selector) && f.label),
     );

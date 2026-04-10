@@ -61,7 +61,7 @@ export const preSubmitCheckState: StateHandler = {
     // Instead of failing immediately, retry each empty combobox once
     // with a fresh interaction cycle.
     const retryable = emptyRequired.filter(
-      (f) => f.role === "combobox" && f.selector.startsWith("#question_"),
+      (f) => f.role === "combobox" && (f.selector.startsWith("#question_") || f.selector.startsWith('[id="question_')),
     );
 
     if (retryable.length > 0 && context.execute) {
@@ -257,7 +257,7 @@ export const preSubmitCheckState: StateHandler = {
     const emptyTextQuestions = emptyRequired.filter(
       (f) => (f.type === "text" || f.type === "textarea")
         && f.label
-        && (f.selector.startsWith("#question_") || f.selector.match(/^\[id="\d+"\]$/)),
+        && (f.selector.startsWith("#question_") || f.selector.startsWith('[id="question_') || f.selector.match(/^\[id="\d+"\]$/)),
     );
 
     if (emptyTextQuestions.length > 0 && context.execute) {
