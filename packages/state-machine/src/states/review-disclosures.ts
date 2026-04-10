@@ -277,11 +277,28 @@ export const reviewDisclosuresState: StateHandler = {
     // fields that are still empty (e.g. label didn't match rules, or the
     // field was skipped as non-required during screening but the form
     // still validates it).
+    //
+    // Greenhouse Remix boards may render EEO fields lazily — scroll the
+    // EEOC section into view to trigger rendering before probing.
+    const eeocSection = await context.execute({
+      type: "WAIT_FOR",
+      target: ".eeoc__container, .eeoc, [class*='eeoc']",
+      timeoutMs: 1000,
+    });
+    if (eeocSection.success) {
+      await context.execute({
+        type: "CLICK",
+        target: { kind: "css", value: ".eeoc__container, .eeoc, [class*='eeoc']" },
+      });
+      // Settle time for lazy-rendered fields
+      await context.execute({ type: "WAIT_FOR", target: SETTLE_SELECTOR, timeoutMs: 1000 });
+    }
+
     for (const field of GREENHOUSE_STANDARD_EEO) {
       const exists = await context.execute({
         type: "WAIT_FOR",
         target: field.selector,
-        timeoutMs: 200,
+        timeoutMs: 1500,
       });
       if (!exists.success) { skipped.push(field.label); continue; }
 
