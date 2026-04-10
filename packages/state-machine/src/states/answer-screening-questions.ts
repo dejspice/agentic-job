@@ -66,14 +66,21 @@ function extractQuestionId(selector: string): string {
 // used in #hash selectors.  Use attribute selectors for those.
 const NEEDS_ATTR_SELECTOR = /[\[\](){}#.+~>:,]/;
 
+function cssEscapeValue(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 function optionIdSelector(questionId: string, index: number): string {
   const raw = `react-select-${questionId}-option-${index}`;
-  return NEEDS_ATTR_SELECTOR.test(raw) ? `[id="${raw}"]` : `#${raw}`;
+  if (NEEDS_ATTR_SELECTOR.test(raw)) {
+    return `[id="${cssEscapeValue(raw)}"]`;
+  }
+  return `#${raw}`;
 }
 
 function optionIdPrefix(questionId: string): string {
   const raw = `react-select-${questionId}-option`;
-  return `[id^="${raw}"]`;
+  return `[id^="${cssEscapeValue(raw)}"]`;
 }
 
 /**
