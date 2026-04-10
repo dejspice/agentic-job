@@ -76,7 +76,16 @@ import { resolve } from "node:path";
 import { BrowserBroker, RuntimeProvider } from "@dejsol/browser-broker";
 import type { SessionRequirements, AllocatedSession } from "@dejsol/browser-broker";
 import { LocalFileArtifactStore } from "@dejsol/browser-worker";
-import { createAnswerGenerator, createClaudeProvider } from "@dejsol/intelligence";
+import {
+  createAnswerGenerator,
+  createClaudeProvider,
+  createAnswerAdjudicator,
+  createNoOpAdjudicator,
+  applyPolicy,
+} from "@dejsol/intelligence";
+import type { AdjudicationInput } from "@dejsol/intelligence";
+import type { AnswerBank } from "@dejsol/core";
+import type { ScreeningAnswerEntry } from "@dejsol/state-machine";
 import { pollForVerificationCode } from "../connectors/gmail-poller.js";
 import {
   executeGreenhouseHappyPath,
@@ -264,6 +273,8 @@ export interface ApplicationResult {
   finalState?: string;
   statesCompleted?: string[];
   artifactDir?: string;
+  screeningAnswers?: ScreeningAnswerEntry[];
+  updatedAnswerBank?: AnswerBank;
 }
 
 /**
@@ -280,6 +291,7 @@ export async function runGreenhouseApplication(
     provider?: RuntimeProvider;
     headless?: boolean;
     quiet?: boolean;
+    answerBank?: AnswerBank;
   },
 ): Promise<ApplicationResult> {
   const runId = options?.runId ?? randomUUID();
@@ -327,6 +339,14 @@ export async function runGreenhouseApplication(
     for (const [k, v] of Object.entries(config.candidate)) {
       if (v && !candidateBag[k]) candidateBag[k] = v;
     }
+    // Education defaults — required by some Greenhouse boards
+    if (!candidateBag.school) candidateBag.school = "University of Texas at Dallas";
+    if (!candidateBag.degree) candidateBag.degree = "Bachelor's";
+    if (!candidateBag.discipline) candidateBag.discipline = "Computer Science";
+    if (!candidateBag.eduStartYear) candidateBag.eduStartYear = "2016";
+    if (!candidateBag.eduEndYear) candidateBag.eduEndYear = "2020";
+    if (!candidateBag.eduStartMonth) candidateBag.eduStartMonth = "August";
+    if (!candidateBag.eduEndMonth) candidateBag.eduEndMonth = "May";
 
     const urlCompany = input.jobUrl.match(/greenhouse\.io\/([^/]+)/)?.[1] ?? undefined;
 
@@ -335,10 +355,13 @@ export async function runGreenhouseApplication(
       ? createAnswerGenerator(createClaudeProvider(anthropicKey))
       : createAnswerGenerator();
 
+    const inputAnswerBank: AnswerBank = (options?.answerBank as AnswerBank | undefined) ?? {};
+
     const data: Record<string, unknown> = {
       resumeFile: config.resumePath,
       candidate: candidateBag,
       answerGenerator,
+      answerBank: inputAnswerBank,
       company: urlCompany,
       jobTitle: undefined,
     };
@@ -370,6 +393,7 @@ export async function runGreenhouseApplication(
     // If verification is required and Gmail credentials are configured,
     // poll for the code and enter it on the still-open page.
     if (verificationRequired && session?.page) {
+      console.log("[APPLY] Verification code required — checking Gmail...");
       const code = await pollForVerificationCode({
         timeoutMs: 90_000,
         pollIntervalMs: 3_000,
@@ -388,6 +412,85 @@ export async function runGreenhouseApplication(
       }
     }
 
+    // ── Adjudicate NEW/risky answers ────────────────────────────────
+    const rawAnswers = (data.screeningAnswers ?? result.data?.screeningAnswers) as ScreeningAnswerEntry[] | undefined;
+    if (rawAnswers && rawAnswers.length > 0 && (outcome === "SUBMITTED" || outcome === "VERIFICATION_REQUIRED")) {
+      const riskyAnswers = rawAnswers.filter(a => a.source === "llm" || a.source === "combobox_fallback");
+      if (riskyAnswers.length > 0) {
+        const adjudicator = anthropicKey
+          ? createAnswerAdjudicator(createClaudeProvider(anthropicKey))
+          : createNoOpAdjudicator();
+        const candidateBag = data.candidate as Record<string, string> | undefined;
+        const inputs: AdjudicationInput[] = riskyAnswers.map(a => ({
+          question: a.question,
+          answer: a.answer,
+          source: a.source,
+          confidence: a.confidence,
+          fieldType: a.fieldType,
+          visibleOptions: a.visibleOptions,
+          candidateName: candidateBag ? `${candidateBag.firstName ?? ""} ${candidateBag.lastName ?? ""}`.trim() : undefined,
+          candidateCity: candidateBag?.city,
+          candidateState: candidateBag?.state,
+          company: urlCompany,
+          runOutcome: outcome,
+        }));
+        try {
+          const adjResults = await adjudicator.adjudicateBatch(inputs);
+          for (let i = 0; i < riskyAnswers.length; i++) {
+            const llmRec = adjResults[i];
+            const policyResult = applyPolicy({
+              question: riskyAnswers[i].question,
+              answer: riskyAnswers[i].answer,
+              source: riskyAnswers[i].source,
+              confidence: riskyAnswers[i].confidence,
+              fieldType: riskyAnswers[i].fieldType,
+              visibleOptions: riskyAnswers[i].visibleOptions,
+              llmRecommendation: llmRec,
+            });
+            riskyAnswers[i].adjudication = {
+              appropriatenessScore: llmRec.appropriatenessScore,
+              riskLevel: policyResult.decision === "reject" ? "high"
+                : policyResult.decision === "human_review_required" ? "high"
+                : policyResult.decision === "candidate_bank_only" ? "medium"
+                : "low",
+              recommendation: policyResult.decision,
+              reason: policyResult.reason,
+            };
+          }
+        } catch (adjErr) {
+          console.log(`[ADJUDICATE] Error: ${adjErr instanceof Error ? adjErr.message : String(adjErr)}`);
+        }
+      }
+    }
+
+    // ── Answer bank write-back ──────────────────────────────────────
+    // After successful runs, merge answers into the bank.
+    // Policy-gated: only auto-promote answers whose adjudication allows it.
+    let updatedBank: AnswerBank | undefined;
+    if (rawAnswers && rawAnswers.length > 0 && (outcome === "SUBMITTED" || outcome === "VERIFICATION_REQUIRED")) {
+      updatedBank = { ...inputAnswerBank };
+      for (const entry of rawAnswers) {
+        if (entry.source === "prefilled") continue;
+        const adj = entry.adjudication;
+        if (adj && (adj.recommendation === "reject" || adj.recommendation === "human_review_required")) continue;
+        if (!adj && (entry.source === "llm" || entry.source === "combobox_fallback")) continue;
+        if (entry.confidence < 0.7) continue;
+        const normKey = entry.question.toLowerCase().replace(/[*:?\s]+/g, " ").trim();
+        const bankSource = entry.source === "rule" ? "rule" as const
+          : entry.source === "llm" ? "generated" as const
+          : entry.source === "answer_bank" ? updatedBank[normKey]?.source ?? "generated" as const
+          : "generated" as const;
+        updatedBank[normKey] = {
+          question: entry.question,
+          answer: entry.answer,
+          source: bankSource,
+          confidence: entry.confidence,
+          lastUsed: new Date().toISOString(),
+          ...(entry.ruleName ? { ruleName: entry.ruleName } : {}),
+        };
+      }
+    }
+
     return {
       outcome,
       runId,
@@ -395,6 +498,8 @@ export async function runGreenhouseApplication(
       finalState: String(result.finalState),
       statesCompleted: result.statesCompleted.map(String),
       artifactDir: `${artifactDir}/${runId}`,
+      screeningAnswers: rawAnswers,
+      updatedAnswerBank: updatedBank,
       ...(result.error ? { error: result.error } : {}),
     };
   } catch (err) {

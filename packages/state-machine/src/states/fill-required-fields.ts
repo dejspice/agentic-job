@@ -1,6 +1,7 @@
 import { StateName } from "@dejsol/core";
 import type { StateHandler, StateContext, StateResult } from "../types.js";
 import type { CommandExecutor } from "../types.js";
+import { pickBestOption } from "../screening/option-matcher.js";
 
 interface GreenhouseFieldDef {
   /**
@@ -20,12 +21,13 @@ interface GreenhouseFieldDef {
   required: boolean;
   /**
    * Interaction strategy:
-   *   "type"                  — plain text fill (default)
-   *   "react-select"          — standard React Select combobox
-   *   "location-autocomplete" — async React Select that fetches suggestions
-   *                             from a server endpoint (Greenhouse location)
+   *   "type"                     — plain text fill (default)
+   *   "react-select"             — standard React Select combobox
+   *   "native-select"            — native HTML <select> dropdown
+   *   "location-autocomplete"    — async React Select, clicks first suggestion
+   *   "education-autocomplete"   — async React Select, scores options before clicking
    */
-  interaction?: "type" | "react-select" | "location-autocomplete";
+  interaction?: "type" | "react-select" | "native-select" | "location-autocomplete" | "education-autocomplete";
 }
 
 /**
@@ -107,6 +109,50 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
     dataKey: "candidate.city",
     required: false,
     interaction: "location-autocomplete",
+  },
+
+  // ── Education section (Greenhouse standard) ────────────────────────
+  // Some boards require at least one education entry. The --0 suffix
+  // indicates the first (and usually only) education row.
+  {
+    selectors: ["#school--0", 'input[id="school--0"]'],
+    dataKey: "candidate.school",
+    required: false,
+    interaction: "education-autocomplete",
+  },
+  {
+    selectors: ["#degree--0", 'input[id="degree--0"]'],
+    dataKey: "candidate.degree",
+    required: false,
+    interaction: "react-select",
+  },
+  {
+    selectors: ["#discipline--0", 'input[id="discipline--0"]'],
+    dataKey: "candidate.discipline",
+    required: false,
+    interaction: "react-select",
+  },
+  {
+    selectors: ["#start-year--0", 'input[id="start-year--0"]'],
+    dataKey: "candidate.eduStartYear",
+    required: false,
+  },
+  {
+    selectors: ["#end-year--0", 'input[id="end-year--0"]'],
+    dataKey: "candidate.eduEndYear",
+    required: false,
+  },
+  {
+    selectors: ["#start-month--0", 'select[id="start-month--0"]'],
+    dataKey: "candidate.eduStartMonth",
+    required: false,
+    interaction: "react-select",
+  },
+  {
+    selectors: ["#end-month--0", 'select[id="end-month--0"]'],
+    dataKey: "candidate.eduEndMonth",
+    required: false,
+    interaction: "react-select",
   },
 ];
 
@@ -193,6 +239,88 @@ async function fillLocationAutocomplete(
   return optionFound;
 }
 
+/**
+ * Fill a Greenhouse education autocomplete field (school, etc.).
+ *
+ * Unlike location-autocomplete which clicks the first suggestion,
+ * this reads all visible options and scores them against the desired
+ * value using pickBestOption. Handles differences like:
+ *   "University of Texas at Dallas" vs "University of Texas - Dallas"
+ */
+async function fillEducationAutocomplete(
+  execute: CommandExecutor,
+  selector: string,
+  value: string,
+): Promise<boolean> {
+  const fieldId = selector.replace(/^#/, "");
+
+  // Use the value directly as the seed — Greenhouse school search needs the
+  // full name (e.g. "University of Texas at Dallas") to find relevant results.
+  // Truncate to 40 chars to avoid overly long sequential typing.
+  const seed = value.substring(0, Math.min(value.length, 40));
+
+  // Type the seed and wait for the autocomplete menu to appear
+  await execute({ type: "TYPE", selector, value: seed, sequential: true });
+
+  const MENU_SELECTORS: readonly string[] = [
+    "[class*='select__menu']",
+    "[id*='-option-']",
+    "[role='option']",
+    ".select__option",
+    "[role='listbox']",
+  ];
+
+  let menuFound = false;
+  for (const sel of MENU_SELECTORS) {
+    const wait = await execute({ type: "WAIT_FOR", target: sel, timeoutMs: 5000 });
+    if (wait.success) { menuFound = true; break; }
+  }
+
+  if (menuFound) {
+    // Try clicking by semantic label (text content match in the dropdown)
+    // This works for custom select components that render options as plain divs
+    const textClick = await execute({ type: "CLICK", target: { kind: "semantic", label: value } });
+    if (textClick.success) return true;
+
+    // Try EXTRACT_OPTIONS + scoring + semantic click
+    const extractResult = await execute({ type: "EXTRACT_OPTIONS" });
+    const opts = extractResult.success
+      ? ((extractResult.data as Record<string, unknown>)?.options as string[] ?? [])
+      : [];
+    if (opts.length > 0) {
+      const normalizedValue = value.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim();
+      const best = pickBestOption(normalizedValue, opts.map(l => l.replace(/-/g, " ").replace(/\b(at|the)\b/gi, "").replace(/\s+/g, " ").trim()));
+      if (best) {
+        const optClick = await execute({ type: "CLICK", target: { kind: "semantic", label: opts[best.index] } });
+        if (optClick.success) return true;
+      }
+    }
+
+    // Try react-select ID-based click
+    const firstOpt = `#react-select-${fieldId}-option-0`;
+    const firstExists = await execute({ type: "WAIT_FOR", target: firstOpt, timeoutMs: 500 });
+    if (firstExists.success) {
+      await execute({ type: "CLICK", target: { kind: "css", value: firstOpt } });
+      return true;
+    }
+  }
+
+  // Last resort: clear, type full value, and press Tab to commit
+  await execute({ type: "TYPE", selector, value: "", clearFirst: true });
+  await execute({ type: "TYPE", selector, value, sequential: true });
+  // Brief wait for async suggestions, then Tab to accept the top suggestion
+  await execute({ type: "WAIT_FOR", target: "[class*='select__menu']", timeoutMs: 3000 });
+  await execute({ type: "TYPE", selector, value: "\t" });
+
+  return true;
+}
+
+const MONTH_TO_NUMBER: Record<string, string> = {
+  january: "1", february: "2", march: "3", april: "4", may: "5", june: "6",
+  july: "7", august: "8", september: "9", october: "10", november: "11", december: "12",
+  jan: "1", feb: "2", mar: "3", apr: "4", jun: "6", jul: "7", aug: "8", sep: "9", oct: "10", nov: "11", dec: "12",
+};
+
 function resolveValue(
   data: Record<string, unknown>,
   dotPath: string,
@@ -251,6 +379,35 @@ export const fillRequiredFieldsState: StateHandler = {
           timeoutMs: waitMs,
         });
         if (!checkResult.success) continue;
+
+        if (field.interaction === "native-select") {
+          let selectOk = false;
+          const selectResult = await context.execute({ type: "SELECT", selector, value });
+          selectOk = selectResult.success;
+          if (!selectOk) {
+            const numericMonth = MONTH_TO_NUMBER[value.toLowerCase()];
+            if (numericMonth) {
+              const retryResult = await context.execute({ type: "SELECT", selector, value: numericMonth });
+              selectOk = retryResult.success;
+            }
+          }
+          if (selectOk) {
+            filledFields.push(selector);
+            filled = true;
+            break;
+          }
+          continue;
+        }
+
+        if (field.interaction === "education-autocomplete") {
+          const eduFilled = await fillEducationAutocomplete(context.execute, selector, value);
+          if (eduFilled) {
+            filledFields.push(selector);
+            filled = true;
+            break;
+          }
+          continue;
+        }
 
         if (field.interaction === "location-autocomplete") {
           const locFilled = await fillLocationAutocomplete(context.execute, selector, value);

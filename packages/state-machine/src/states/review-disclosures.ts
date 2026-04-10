@@ -41,6 +41,13 @@ const GREENHOUSE_STANDARD_EEO: ReadonlyArray<{
     fallback: "No, I do not have a disability and have not had one in the past",
     searchSeed: "do not have",
   },
+  {
+    selector: "#race",
+    label: "Race / Ethnicity",
+    dataKey: "candidate.raceEthnicity",
+    fallback: "South Asian",
+    searchSeed: "South",
+  },
 ];
 
 const CUSTOM_EEO_PATTERNS: ReadonlyArray<{
@@ -265,9 +272,11 @@ export const reviewDisclosuresState: StateHandler = {
     const skipped: string[] = [];
 
     // ── 1. Standard Greenhouse EEO fields ─────────────────────────────────
-    // These fields (#gender, #hispanic_ethnicity, #veteran_status,
-    // #disability_status) are NOT required on Greenhouse forms.
-    // Skip them — only fill required fields.
+    // Standard EEO fields (#gender, #hispanic_ethnicity, #veteran_status,
+    // #disability_status, #race) are now routed through
+    // ANSWER_SCREENING_QUESTIONS via the EEO selector allowlist + deterministic
+    // rules. REVIEW_DISCLOSURES only handles custom EEO fields (numeric IDs)
+    // and disclosure checkboxes.
     for (const field of GREENHOUSE_STANDARD_EEO) {
       skipped.push(field.label);
     }

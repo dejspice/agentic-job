@@ -17,6 +17,12 @@ async function resolveAndClick(
       await page.getByRole("button", { name: target.label }).or(
         page.getByRole("link", { name: target.label }),
       ).or(
+        page.getByRole("option", { name: target.label }),
+      ).or(
+        page.locator(".select__menu-list").getByText(target.label, { exact: true }),
+      ).or(
+        page.getByText(target.label, { exact: true }),
+      ).or(
         page.getByText(target.label),
       ).first().click({ force });
       break;

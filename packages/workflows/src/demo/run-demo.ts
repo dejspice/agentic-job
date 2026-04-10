@@ -27,6 +27,7 @@
  */
 
 import { resolve } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
 import { readApplicationSheet } from "./sheet-reader.js";
 import { runBatch, runGoogleBatch } from "./batch-runner.js";
 import type { BatchRunResult, BatchSummary } from "./batch-runner.js";
@@ -35,11 +36,18 @@ import { loadCandidateProfile } from "./load-candidate.js";
 
 const DIVIDER = "─".repeat(45);
 
-function printHeader(total: number, mode: string): void {
+function candidateSlug(firstName: string, lastName: string): string {
+  return `${firstName}-${lastName}`.toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-");
+}
+
+function printHeader(total: number, mode: string, candidateName?: string): void {
   console.log();
   console.log(`[DEMO] ${DIVIDER}`);
-  console.log(`[DEMO]  Greenhouse Apply — Batch Demo`);
+  console.log(`[DEMO]  Greenhouse Apply — Batch Runner`);
   console.log(`[DEMO]  Mode: ${mode}`);
+  if (candidateName) {
+    console.log(`[DEMO]  Candidate: ${candidateName}`);
+  }
   console.log(`[DEMO] ${DIVIDER}`);
   console.log(`[DEMO]  Loading ${total} job application(s)…`);
   console.log(`[DEMO] ${DIVIDER}`);
@@ -62,15 +70,21 @@ function printProgress(
     ? "SUBMITTED (verify)"
     : result.outcome;
   const duration = (result.durationMs / 1000).toFixed(1);
+  const label = result.company
+    ? `${result.candidate} → ${result.company}`
+    : result.candidate;
 
   console.log(
-    `[DEMO]  ${icon} [${completed}/${total}] ${result.candidate} — ${displayOutcome} (${duration}s)`,
+    `[DEMO]  ${icon} [${completed}/${total}] ${label} — ${displayOutcome} (${duration}s)`,
   );
 }
 
-function printSummary(summary: BatchSummary): void {
+function printSummary(summary: BatchSummary, outputFile: string): void {
   console.log();
   console.log(`[DEMO] ${DIVIDER}`);
+  if (summary.candidateName) {
+    console.log(`[DEMO]  Candidate:     ${summary.candidateName}`);
+  }
   console.log(`[DEMO]  Total jobs:    ${summary.totalJobs}`);
   console.log(`[DEMO]  Submitted:     ${summary.submitted}`);
   if (summary.verification > 0) {
@@ -82,7 +96,7 @@ function printSummary(summary: BatchSummary): void {
   }
   console.log(`[DEMO]  Success rate:  ${summary.successRate}`);
   console.log(`[DEMO] ${DIVIDER}`);
-  console.log(`[DEMO]  Results saved: artifacts-batch/run-results.json`);
+  console.log(`[DEMO]  Results saved: ${outputFile}`);
   console.log(`[DEMO] ${DIVIDER}`);
   console.log();
 }
@@ -110,16 +124,17 @@ async function runLocalMode(): Promise<void> {
     process.exit(1);
   }
 
-  printHeader(rows.length, "local");
+  printHeader(rows.length, "local", undefined);
 
+  const outputFile = "artifacts-batch/run-results.json";
   const summary = await runBatch(rows, {
     artifactDir: resolve("./artifacts-batch"),
-    outputPath: resolve("./artifacts-batch/run-results.json"),
+    outputPath: resolve(`./${outputFile}`),
     quiet: true,
     onProgress: printProgress,
   });
 
-  printSummary(summary);
+  printSummary(summary, outputFile);
 }
 
 async function runGoogleMode(): Promise<void> {
@@ -162,6 +177,8 @@ async function runGoogleMode(): Promise<void> {
   }
 
   const limit = parseInt(process.env["DEMO_LIMIT"] ?? "0", 10);
+  const dailyLimit = parseInt(process.env["DEMO_DAILY_LIMIT"] ?? "25", 10);
+
   if (limit > 0 && rows.length > limit) {
     console.log(`[DEMO] Found ${rows.length} pending row(s), limiting to ${limit} (DEMO_LIMIT).`);
     rows = rows.slice(0, limit);
@@ -169,21 +186,28 @@ async function runGoogleMode(): Promise<void> {
     console.log(`[DEMO] Found ${rows.length} pending row(s).`);
   }
 
+  if (dailyLimit > 0 && rows.length > dailyLimit) {
+    console.log(`[DEMO] ⚠ Daily safety limit: capping at ${dailyLimit} applications (DEMO_DAILY_LIMIT).`);
+    rows = rows.slice(0, dailyLimit);
+  }
+
   for (const r of rows.slice(0, 3)) {
     console.log(`[DEMO]   Row ${r.rowIndex}: ${r.company} — ${r.jobTitle} (${r.resumeId})`);
   }
 
-  printHeader(rows.length, "google");
+  const fullName = `${candidate.firstName} ${candidate.lastName}`;
+  const slug = candidateSlug(candidate.firstName, candidate.lastName);
+  const outputFile = `artifacts-batch/run-results-${slug}.json`;
 
-  const headless = process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false";
+  printHeader(rows.length, "google", `${fullName} (${candidate.email})`);
 
   const summary = await runGoogleBatch(rows, {
     spreadsheetId,
     sheetName,
     artifactDir: resolve("./artifacts-batch"),
-    outputPath: resolve("./artifacts-batch/run-results.json"),
+    outputPath: resolve(`./${outputFile}`),
     quiet: true,
-    headless,
+    candidateName: fullName,
     candidateProfile: {
       city: candidate.city,
       state: candidate.state,
@@ -192,7 +216,59 @@ async function runGoogleMode(): Promise<void> {
     onProgress: printProgress,
   });
 
-  printSummary(summary);
+  printSummary(summary, outputFile);
+}
+
+function printAggregateSummary(): void {
+  const dir = resolve("./artifacts-batch");
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter(f => f.startsWith("run-results-") && f.endsWith(".json"));
+  } catch {
+    return;
+  }
+  if (files.length < 2) return;
+
+  let totalJobs = 0, totalSubmitted = 0, totalVerify = 0, totalFailed = 0, totalSkipped = 0;
+  const candidates: string[] = [];
+
+  for (const f of files.sort()) {
+    try {
+      const data = JSON.parse(readFileSync(resolve(dir, f), "utf-8")) as BatchSummary;
+      totalJobs += data.totalJobs;
+      totalSubmitted += data.submitted;
+      totalVerify += data.verification;
+      totalFailed += data.failed;
+      totalSkipped += data.skipped;
+      if (data.candidateName) candidates.push(data.candidateName);
+    } catch {
+      // skip malformed files
+    }
+  }
+
+  const successRate = totalJobs > 0
+    ? `${Math.round(((totalSubmitted + totalVerify) / totalJobs) * 100)}%`
+    : "0%";
+
+  console.log();
+  console.log(`[DEMO] ${"═".repeat(45)}`);
+  console.log(`[DEMO]  AGGREGATE SUMMARY — ${files.length} batch(es)`);
+  if (candidates.length > 0) {
+    console.log(`[DEMO]  Candidates: ${candidates.join(", ")}`);
+  }
+  console.log(`[DEMO] ${"═".repeat(45)}`);
+  console.log(`[DEMO]  Total jobs:    ${totalJobs}`);
+  console.log(`[DEMO]  Submitted:     ${totalSubmitted}`);
+  if (totalVerify > 0) {
+    console.log(`[DEMO]  Verify:        ${totalVerify}`);
+  }
+  console.log(`[DEMO]  Failed:        ${totalFailed}`);
+  if (totalSkipped > 0) {
+    console.log(`[DEMO]  Skipped:       ${totalSkipped}`);
+  }
+  console.log(`[DEMO]  Success rate:  ${successRate}`);
+  console.log(`[DEMO] ${"═".repeat(45)}`);
+  console.log();
 }
 
 async function main(): Promise<void> {
@@ -200,6 +276,7 @@ async function main(): Promise<void> {
 
   if (source === "google") {
     await runGoogleMode();
+    printAggregateSummary();
   } else {
     await runLocalMode();
   }

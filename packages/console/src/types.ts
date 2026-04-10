@@ -214,6 +214,25 @@ export interface RunErrorEntry {
   recoverable?: boolean;
 }
 
+export interface ScreeningAdjudication {
+  appropriatenessScore: number;
+  riskLevel: "low" | "medium" | "high";
+  recommendation: "auto_promote_to_answer_bank" | "candidate_bank_only" | "human_review_required" | "reject" | "rule_candidate";
+  reason: string;
+}
+
+export interface ScreeningAnswerEntry {
+  question: string;
+  answer: string;
+  source: "rule" | "answer_bank" | "llm" | "combobox_fallback" | "prefilled";
+  ruleName?: string;
+  confidence: number;
+  fieldType: string;
+  selector: string;
+  visibleOptions?: string[];
+  adjudication?: ScreeningAdjudication;
+}
+
 export interface RunDetailView {
   id: string;
   jobId: string;
@@ -233,6 +252,7 @@ export interface RunDetailView {
   completedAt: string | null;
   confirmationId: string | null;
   errors: RunErrorEntry[];
+  screeningAnswers?: ScreeningAnswerEntry[];
 }
 
 // ---------------------------------------------------------------------------

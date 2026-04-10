@@ -60,3 +60,10 @@ export {
   escalateState,
   stateHandlers,
 } from "./states/index.js";
+
+export type {
+  ScreeningAnswerEntry,
+  AdjudicationResult,
+  AdjudicationRisk,
+  PromotionRecommendation,
+} from "./states/answer-screening-questions.js";

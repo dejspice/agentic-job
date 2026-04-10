@@ -24,9 +24,11 @@ export interface AnswerBankEntry {
   question: string;
   answer: string;
   embedding?: number[];
-  source: "manual" | "generated" | "captured";
+  source: "manual" | "generated" | "captured" | "rule";
   confidence?: number;
   lastUsed?: string;
+  /** Deterministic rule name that produced this answer, if source is "rule". */
+  ruleName?: string;
 }
 
 export type AnswerBank = Record<string, AnswerBankEntry>;

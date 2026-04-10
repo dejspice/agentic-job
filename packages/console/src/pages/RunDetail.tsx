@@ -4,8 +4,8 @@ import { Topbar } from "../components/Topbar";
 import { StatusBadge } from "../components/StatusBadge";
 import { RunTimeline } from "../components/RunTimeline";
 import { StateName } from "../types";
-import type { RunDetailView, RunStatus } from "../types";
-import { getRunDetail, approveRun, rejectRun, submitVerificationCode } from "../lib/api";
+import type { RunDetailView, RunStatus, ScreeningAnswerEntry, ScreeningAdjudication } from "../types";
+import { getRunDetail, approveRun, rejectRun, submitVerificationCode, getRunScreeningAnswers, approveScreeningAnswers } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,6 +74,398 @@ function KVRow({ label, value }: { label: string; value: React.ReactNode }) {
       <span style={{ color: "#64748b", fontWeight: 500 }}>{label}</span>
       <span style={{ color: "#0f172a" }}>{value}</span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Screening Answers Review
+// ---------------------------------------------------------------------------
+
+const SOURCE_META: Record<string, { label: string; color: string; bg: string; risk: number }> = {
+  rule:              { label: "Rule",       color: "#1e40af", bg: "#dbeafe", risk: 0 },
+  answer_bank:       { label: "Bank",       color: "#7c2d12", bg: "#fed7aa", risk: 0 },
+  llm:               { label: "LLM",        color: "#6b21a8", bg: "#ede9fe", risk: 2 },
+  combobox_fallback: { label: "Fallback",   color: "#92400e", bg: "#fef3c7", risk: 1 },
+  prefilled:         { label: "Prefilled",  color: "#475569", bg: "#f1f5f9", risk: 0 },
+};
+
+function answerRisk(a: ScreeningAnswerEntry): number {
+  const base = SOURCE_META[a.source]?.risk ?? 0;
+  const confPenalty = a.confidence < 0.8 ? 2 : a.confidence < 0.95 ? 1 : 0;
+  return base + confPenalty;
+}
+
+function SourceBadge({ source }: { source: string }) {
+  const s = SOURCE_META[source] ?? { label: source, color: "#475569", bg: "#f1f5f9" };
+  return (
+    <span style={{
+      display: "inline-block", padding: "1px 7px", borderRadius: 4,
+      fontSize: 10, fontWeight: 700, color: s.color, background: s.bg,
+    }}>
+      {s.label}
+    </span>
+  );
+}
+
+function NoveltyBadge({ source }: { source: string }) {
+  if (source === "llm" || source === "combobox_fallback") {
+    return (
+      <span style={{
+        display: "inline-block", padding: "1px 5px", borderRadius: 4,
+        fontSize: 9, fontWeight: 800, letterSpacing: "0.05em",
+        color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca",
+      }}>
+        NEW
+      </span>
+    );
+  }
+  if (source === "answer_bank") {
+    return (
+      <span style={{
+        display: "inline-block", padding: "1px 5px", borderRadius: 4,
+        fontSize: 9, fontWeight: 800, letterSpacing: "0.05em",
+        color: "#16a34a", background: "#dcfce7", border: "1px solid #bbf7d0",
+      }}>
+        REUSED
+      </span>
+    );
+  }
+  return null;
+}
+
+function ConfidencePill({ confidence }: { confidence: number }) {
+  const pct = Math.round(confidence * 100);
+  const color = pct >= 95 ? "#16a34a" : pct >= 80 ? "#b45309" : "#b91c1c";
+  const bg = pct >= 95 ? "#dcfce7" : pct >= 80 ? "#fef3c7" : "#fee2e2";
+  return (
+    <span style={{
+      display: "inline-block", padding: "1px 6px", borderRadius: 4,
+      fontSize: 10, fontWeight: 700, fontFamily: "monospace",
+      color, background: bg,
+    }}>
+      {pct}%
+    </span>
+  );
+}
+
+const REC_STYLE: Record<string, { label: string; color: string; bg: string }> = {
+  auto_promote_to_answer_bank: { label: "Auto-promote", color: "#16a34a", bg: "#dcfce7" },
+  candidate_bank_only:         { label: "Candidate only", color: "#7c2d12", bg: "#fed7aa" },
+  human_review_required:       { label: "Needs review", color: "#b91c1c", bg: "#fee2e2" },
+  reject:                      { label: "Reject", color: "#991b1b", bg: "#fecaca" },
+  rule_candidate:              { label: "Rule candidate", color: "#1e40af", bg: "#dbeafe" },
+};
+
+function AdjudicationBadge({ adj }: { adj: ScreeningAdjudication }) {
+  const s = REC_STYLE[adj.recommendation] ?? { label: adj.recommendation, color: "#475569", bg: "#f1f5f9" };
+  return (
+    <span title={adj.reason} style={{
+      display: "inline-block", padding: "1px 6px", borderRadius: 4,
+      fontSize: 9, fontWeight: 700, color: s.color, background: s.bg,
+      cursor: "help",
+    }}>
+      {s.label}
+    </span>
+  );
+}
+
+function VisibleOptionsList({ options }: { options: string[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 2 }}>
+      <button onClick={() => setOpen(v => !v)} style={{
+        fontSize: 10, color: "#64748b", background: "none", border: "none",
+        cursor: "pointer", padding: 0, textDecoration: "underline",
+      }}>
+        {open ? "Hide options" : `View ${options.length} options`}
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4 }}>
+          {options.map((o, i) => (
+            <span key={i} style={{
+              fontSize: 10, padding: "1px 5px", borderRadius: 3,
+              background: "#f1f5f9", color: "#475569",
+            }}>{o}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScreeningAnswersSection({
+  runId,
+  outcome,
+}: {
+  runId: string;
+  outcome: string | null;
+}) {
+  const [answers, setAnswers] = useState<ScreeningAnswerEntry[]>([]);
+  const [edits, setEdits] = useState<Record<number, string>>({});
+  const [excluded, setExcluded] = useState<Set<number>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [approving, setApproving] = useState(false);
+  const [banner, setBanner] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    getRunScreeningAnswers(runId)
+      .then((data) => setAnswers(data.answers))
+      .finally(() => setLoading(false));
+  }, [runId]);
+
+  if (loading) {
+    return (
+      <SectionCard title="Screening Answers">
+        <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>Loading…</p>
+      </SectionCard>
+    );
+  }
+
+  if (answers.length === 0) {
+    return (
+      <SectionCard title="Screening Answers">
+        <p style={{ margin: 0, fontSize: 13, color: "#94a3b8" }}>
+          No screening answers recorded for this run.
+        </p>
+      </SectionCard>
+    );
+  }
+
+  const isSuccessful = outcome === "SUBMITTED" || outcome === "VERIFICATION_REQUIRED";
+  const approvable = answers.filter((a) => a.source !== "prefilled");
+  const needsReview = answers.filter((a) => answerRisk(a) >= 2);
+  const sorted = [...answers].sort((a, b) => answerRisk(b) - answerRisk(a));
+
+  const srcCounts: Record<string, number> = {};
+  for (const a of answers) { srcCounts[a.source] = (srcCounts[a.source] ?? 0) + 1; }
+  const newCount = answers.filter(a => a.source === "llm" || a.source === "combobox_fallback").length;
+  const reusedCount = answers.filter(a => a.source === "answer_bank").length;
+  const safeCount = answers.filter(a => a.source === "rule" || a.source === "prefilled").length;
+
+  function toggleExclude(idx: number) {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  }
+
+  async function handleApprove() {
+    setApproving(true);
+    setBanner(null);
+    try {
+      const toApprove = approvable
+        .map((a, i) => ({ a, origIdx: answers.indexOf(a), i }))
+        .filter(({ origIdx }) => !excluded.has(origIdx))
+        .map(({ a, origIdx }) => ({
+          question: a.question,
+          answer: edits[origIdx] ?? a.answer,
+          source: edits[origIdx] !== undefined ? "manual" : a.source === "llm" ? "generated" : a.source,
+          confidence: edits[origIdx] !== undefined ? 1.0 : a.confidence,
+        }));
+      if (toApprove.length === 0) {
+        setBanner({ ok: false, msg: "All answers excluded — nothing to approve." });
+        return;
+      }
+      const result = await approveScreeningAnswers(runId, toApprove);
+      setBanner({ ok: true, msg: `${result.approved} answer(s) approved → bank now has ${result.bankSize} entries.` });
+      setEdits({});
+      setExcluded(new Set());
+    } catch (e) {
+      setBanner({ ok: false, msg: `Failed: ${(e as Error).message}` });
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  const includedCount = approvable.filter((_, i) => !excluded.has(answers.indexOf(approvable[i]))).length;
+  const isSafeRun = newCount === 0 && answers.length > 0;
+  const [detailOpen, setDetailOpen] = useState(!isSafeRun);
+
+  return (
+    <SectionCard title="Screening Answers">
+      {/* Safe run banner */}
+      {isSafeRun && isSuccessful && !banner && (
+        <div style={{
+          marginBottom: 12, padding: "10px 14px", borderRadius: 8,
+          background: "#f0fdf4", border: "1px solid #bbf7d0",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+        }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d" }}>
+              Safe run — all answers from rules or bank
+            </div>
+            <div style={{ fontSize: 11, color: "#16a34a", marginTop: 2 }}>
+              {safeCount} safe{reusedCount > 0 ? `, ${reusedCount} reused from bank` : ""} — no LLM or fallback answers.
+            </div>
+          </div>
+          <button
+            disabled={approving || approvable.length === 0}
+            onClick={() => void handleApprove()}
+            style={{
+              padding: "6px 14px", fontSize: 12, fontWeight: 700, borderRadius: 6,
+              border: "none", background: approving ? "#86efac" : "#16a34a",
+              color: "#fff", cursor: approving ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap", flexShrink: 0,
+            }}
+          >
+            {approving ? "Saving…" : `Auto-approve ${approvable.length} → Bank`}
+          </button>
+        </div>
+      )}
+
+      {/* Source breakdown + novelty summary + review alert */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+        {Object.entries(srcCounts).map(([src, n]) => (
+          <span key={src} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+            <SourceBadge source={src} />
+            <span style={{ fontSize: 11, color: "#64748b" }}>×{n}</span>
+          </span>
+        ))}
+        <span style={{ width: 1, height: 14, background: "#e2e8f0", flexShrink: 0 }} />
+        {safeCount > 0 && (
+          <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 600 }}>{safeCount} safe</span>
+        )}
+        {reusedCount > 0 && (
+          <span style={{ fontSize: 11, color: "#7c2d12", fontWeight: 600 }}>{reusedCount} reused</span>
+        )}
+        {newCount > 0 && (
+          <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>{newCount} new</span>
+        )}
+        {needsReview.length > 0 && (
+          <span style={{
+            marginLeft: "auto", fontSize: 11, fontWeight: 600,
+            color: "#b91c1c", background: "#fee2e2", padding: "2px 8px",
+            borderRadius: 4,
+          }}>
+            {needsReview.length} need{needsReview.length === 1 ? "s" : ""} review
+          </span>
+        )}
+        {isSafeRun && (
+          <button onClick={() => setDetailOpen(v => !v)} style={{
+            marginLeft: needsReview.length > 0 ? 0 : "auto",
+            fontSize: 11, color: "#64748b", background: "none", border: "none",
+            cursor: "pointer", padding: 0, textDecoration: "underline",
+          }}>
+            {detailOpen ? "Collapse" : "Show details"}
+          </button>
+        )}
+      </div>
+
+      {banner && (
+        <div style={{
+          marginBottom: 12, padding: "8px 12px", borderRadius: 6, fontSize: 12,
+          background: banner.ok ? "#dcfce7" : "#fee2e2",
+          border: `1px solid ${banner.ok ? "#bbf7d0" : "#fecaca"}`,
+          color: banner.ok ? "#15803d" : "#b91c1c",
+          display: "flex", justifyContent: "space-between",
+        }}>
+          <span>{banner.msg}</span>
+          <button onClick={() => setBanner(null)} style={{
+            background: "none", border: "none", cursor: "pointer",
+            fontSize: 14, color: "inherit", padding: "0 4px",
+          }}>×</button>
+        </div>
+      )}
+
+      {detailOpen && <div style={{ maxHeight: 440, overflowY: "auto" }}>
+        {sorted.map((a) => {
+          const origIdx = answers.indexOf(a);
+          const risk = answerRisk(a);
+          const isExcluded = excluded.has(origIdx);
+          const rowBg = isExcluded ? "#f8fafc"
+            : risk >= 3 ? "#fef2f2"
+            : risk >= 2 ? "#fffbeb"
+            : "transparent";
+          const leftBorder = risk >= 3 ? "3px solid #ef4444"
+            : risk >= 2 ? "3px solid #f59e0b"
+            : "3px solid transparent";
+
+          return (
+            <div key={origIdx} style={{
+              padding: "10px 12px", borderBottom: "1px solid #f1f5f9",
+              display: "flex", flexDirection: "column", gap: 4,
+              background: rowBg, borderLeft: leftBorder,
+              opacity: isExcluded ? 0.45 : 1,
+              transition: "opacity 0.15s",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {isSuccessful && a.source !== "prefilled" && (
+                  <input
+                    type="checkbox"
+                    checked={!isExcluded}
+                    onChange={() => toggleExclude(origIdx)}
+                    title={isExcluded ? "Include in approval" : "Exclude from approval"}
+                    style={{ margin: 0, cursor: "pointer", accentColor: "#16a34a" }}
+                  />
+                )}
+                <SourceBadge source={a.source} />
+                <NoveltyBadge source={a.source} />
+                <span style={{ fontSize: 12, color: "#64748b", flex: 1, lineHeight: 1.3 }}>
+                  {a.question}
+                </span>
+                <ConfidencePill confidence={a.confidence} />
+                {a.adjudication && <AdjudicationBadge adj={a.adjudication} />}
+              </div>
+              {isSuccessful && a.source !== "prefilled" ? (
+                <input
+                  type="text"
+                  value={edits[origIdx] ?? a.answer}
+                  onChange={(e) => setEdits((prev) => ({ ...prev, [origIdx]: e.target.value }))}
+                  style={{
+                    fontSize: 13, padding: "5px 8px",
+                    border: risk >= 2 ? "1px solid #f59e0b" : "1px solid #e2e8f0",
+                    borderRadius: 6, color: "#0f172a",
+                    background: edits[origIdx] !== undefined ? "#fefce8" : "#ffffff",
+                    width: "100%", boxSizing: "border-box" as const,
+                  }}
+                />
+              ) : (
+                <span style={{ fontSize: 13, color: "#0f172a", paddingLeft: 2 }}>
+                  {a.answer}
+                </span>
+              )}
+              {a.adjudication && (
+                <span style={{ fontSize: 10, color: "#94a3b8", fontStyle: "italic" }}>
+                  {a.adjudication.reason}
+                </span>
+              )}
+              {a.visibleOptions && a.visibleOptions.length > 0 && (
+                <VisibleOptionsList options={a.visibleOptions} />
+              )}
+              {a.ruleName && (
+                <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace" }}>
+                  rule: {a.ruleName}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>}
+
+      {detailOpen && isSuccessful && approvable.length > 0 && !isSafeRun && (
+        <div style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            disabled={approving || includedCount === 0}
+            onClick={() => void handleApprove()}
+            style={{
+              flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 600,
+              borderRadius: 7, border: "none",
+              background: approving || includedCount === 0 ? "#d1d5db" : "#16a34a",
+              color: "#ffffff", cursor: approving || includedCount === 0 ? "not-allowed" : "pointer",
+            }}
+          >
+            {approving ? "Saving…" : `Approve ${includedCount} Answer(s) → Bank`}
+          </button>
+          {excluded.size > 0 && (
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>
+              {excluded.size} excluded
+            </span>
+          )}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 
@@ -401,6 +793,9 @@ export function RunDetail() {
                 ))}
               </SectionCard>
             )}
+
+            {/* Screening Answers — review + approve */}
+            {runId && <ScreeningAnswersSection runId={runId} outcome={run.outcome} />}
           </div>
 
           {/* Right column: timeline + action panel + artifacts */}

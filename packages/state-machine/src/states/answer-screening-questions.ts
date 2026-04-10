@@ -1,4 +1,5 @@
 import { StateName } from "@dejsol/core";
+import type { AnswerBank } from "@dejsol/core";
 import type { StateHandler, StateContext, StateResult } from "../types.js";
 import type { CommandExecutor } from "../types.js";
 import {
@@ -7,6 +8,39 @@ import {
 } from "../screening/deterministic-rules.js";
 import { pickBestOption } from "../screening/option-matcher.js";
 import type { AnswerGeneratorService } from "@dejsol/intelligence";
+import { matchAnswerBank } from "@dejsol/intelligence";
+
+export type AdjudicationRisk = "low" | "medium" | "high";
+export type PromotionRecommendation =
+  | "auto_promote_to_answer_bank"
+  | "candidate_bank_only"
+  | "human_review_required"
+  | "reject"
+  | "rule_candidate";
+
+export interface AdjudicationResult {
+  appropriatenessScore: number;
+  riskLevel: AdjudicationRisk;
+  recommendation: PromotionRecommendation;
+  reason: string;
+}
+
+/**
+ * Structured record of a single screening answer produced during a run.
+ * Persisted into context.data.screeningAnswers for downstream consumption
+ * (answer bank write-back, operator review, audit).
+ */
+export interface ScreeningAnswerEntry {
+  question: string;
+  answer: string;
+  source: "rule" | "answer_bank" | "llm" | "combobox_fallback" | "prefilled";
+  ruleName?: string;
+  confidence: number;
+  fieldType: string;
+  selector: string;
+  visibleOptions?: string[];
+  adjudication?: AdjudicationResult;
+}
 
 /**
  * Selectors for visible React Select dropdown options, in priority order.
@@ -103,9 +137,6 @@ export async function fillReactSelect(
         await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
         return true;
       }
-      // Fallback: click option-0 (first option in the filtered list)
-      await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
-      return true;
     }
 
     // Seed produced zero results — clear and retry with no filter to
@@ -132,8 +163,6 @@ export async function fillReactSelect(
         await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
         return true;
       }
-      await execute({ type: "CLICK", target: { kind: "css", value: `#react-select-${questionId}-option-0` } });
-      return true;
     }
   }
 
@@ -231,22 +260,43 @@ export const answerScreeningQuestionsState: StateHandler = {
 
     const allFields = (extractResult.data as Record<string, unknown>).fields as ExtractedQuestion[];
 
+    const GREENHOUSE_EEO_SELECTORS = new Set([
+      "#gender", "#race", "#veteran_status", "#disability_status", "#hispanic_ethnicity",
+    ]);
+
+    const EEO_SAFE_DECLINE_SEEDS = [
+      "prefer not to",
+      "decline",
+      "don't wish",
+      "do not wish",
+      "choose not",
+    ];
+
     const questions = allFields.filter(
-      (f) => f.selector.startsWith("#question_") && f.label
-        || (f.selector.match(/^\[id="\d+"\]$/) && f.label),
+      (f) => (f.selector.startsWith("#question_") && f.label)
+        || (f.selector.match(/^\[id="\d+"\]$/) && f.label)
+        || (GREENHOUSE_EEO_SELECTORS.has(f.selector) && f.label),
     );
 
     if (questions.length === 0) {
       return { outcome: "success", data: { screeningQuestionsFound: 0 } };
     }
 
+    const answerBank = (context.data.answerBank as AnswerBank | undefined) ?? {};
+
     const answered: string[] = [];
     const skipped: string[] = [];
     const failed: string[] = [];
+    const screeningAnswers: ScreeningAnswerEntry[] = [];
+
+    function record(entry: ScreeningAnswerEntry): void {
+      screeningAnswers.push(entry);
+    }
 
     for (const q of questions) {
       if (q.value) {
         answered.push(q.label);
+        record({ question: q.label, answer: q.value, source: "prefilled", confidence: 1.0, fieldType: q.type, selector: q.selector });
         continue;
       }
 
@@ -255,102 +305,170 @@ export const answerScreeningQuestionsState: StateHandler = {
         continue;
       }
 
+      // ── Tier 1: deterministic rule table ─────────────────────────────
       const match: RuleMatchOutcome = matchScreeningQuestion(q.label, context.data);
 
-      if (!match.matched) {
-        // ── Unmatched required question handling ───────────────────────
-        //
-        //   Dropdown (role="combobox"):
-        //     Open the combobox, read visible options, try "Yes" against
-        //     the actual option list. Only selects if a real match exists.
-        //
-        //   Text / textarea:
-        //     Use LLM fallback to generate a concise answer.
+      if (match.matched && match.value) {
+        const { rule, value } = match;
+        const selector = q.selector;
 
-        if (q.required && q.role === "combobox") {
-          const fillOk = await fillReactSelect(context.execute, q.selector, "Yes");
+        const useReactSelect =
+          q.role === "combobox"
+            ? true
+            : rule.interaction === "react-select";
+
+        if (useReactSelect) {
+          let resolvedSeed = rule.searchSeed;
+          if (resolvedSeed?.startsWith("dataKey:")) {
+            const seedPath = resolvedSeed.slice("dataKey:".length);
+            const parts = seedPath.split(".");
+            let cur: unknown = context.data;
+            for (const p of parts) {
+              if (cur == null || typeof cur !== "object") { cur = undefined; break; }
+              cur = (cur as Record<string, unknown>)[p];
+            }
+            resolvedSeed = typeof cur === "string" ? cur : undefined;
+          }
+          let fillOk = false;
+          if (GREENHOUSE_EEO_SELECTORS.has(selector)) {
+            const selectResult = await context.execute({ type: "SELECT", selector, value });
+            fillOk = selectResult.success;
+          }
+          if (!fillOk) {
+            fillOk = await fillReactSelect(context.execute, selector, value, resolvedSeed);
+          }
           if (fillOk) {
             answered.push(q.label);
+            record({ question: q.label, answer: value, source: "rule", ruleName: rule.name, confidence: 1.0, fieldType: q.type, selector });
+          } else {
+            failed.push(q.label);
+          }
+        } else {
+          const answer = q.maxLength ? value.slice(0, q.maxLength) : value;
+          const typeResult = await context.execute({ type: "TYPE", selector, value: answer });
+          if (typeResult.success) {
+            answered.push(q.label);
+            record({ question: q.label, answer, source: "rule", ruleName: rule.name, confidence: 1.0, fieldType: q.type, selector });
+          } else {
+            failed.push(q.label);
+          }
+        }
+        continue;
+      }
+
+      // ── Tier 2: answer bank lookup ───────────────────────────────────
+      const bankMatch = matchAnswerBank(q.label, answerBank);
+      if (bankMatch && bankMatch.confidence >= 0.75) {
+        const bankAnswer = bankMatch.value.answer;
+        if (q.role === "combobox") {
+          const fillOk = await fillReactSelect(context.execute, q.selector, bankAnswer);
+          if (fillOk) {
+            answered.push(q.label);
+            record({ question: q.label, answer: bankAnswer, source: "answer_bank", confidence: bankMatch.confidence, fieldType: q.type, selector: q.selector });
+            continue;
+          }
+        } else {
+          const answer = q.maxLength ? bankAnswer.slice(0, q.maxLength) : bankAnswer;
+          const typeResult = await context.execute({ type: "TYPE", selector: q.selector, value: answer });
+          if (typeResult.success) {
+            answered.push(q.label);
+            record({ question: q.label, answer, source: "answer_bank", confidence: bankMatch.confidence, fieldType: q.type, selector: q.selector });
             continue;
           }
         }
+      }
 
-        if (q.required && q.role !== "combobox") {
-          const answerGen = context.data.answerGenerator as AnswerGeneratorService | undefined;
-          if (answerGen) {
-            const fieldLimit = q.maxLength ?? 200;
-            const generated = await answerGen.generate(
-              {
-                question: q.label,
-                fieldType: q.type as "text" | "textarea" | "select" | "radio" | "checkbox",
-                jobTitle: context.data.jobTitle as string | undefined,
-                company: context.data.company as string | undefined,
-                maxLength: fieldLimit,
-              },
-              {},
-              undefined,
-            );
-            if (generated) {
-              const answer = q.maxLength
-                ? generated.answer.slice(0, q.maxLength)
-                : generated.answer;
-              const typeResult = await context.execute({
-                type: "TYPE",
-                selector: q.selector,
-                value: answer,
-              });
-              if (typeResult.success) {
-                answered.push(q.label);
-                continue;
-              }
+      // ── Tier 3: unmatched required question handling ─────────────────
+
+      if (q.role === "combobox") {
+        const qId = extractQuestionId(q.selector);
+        const isEeoField = GREENHOUSE_EEO_SELECTORS.has(q.selector);
+        await context.execute({ type: "TYPE", selector: q.selector, value: "", sequential: true });
+        await context.execute({ type: "WAIT_FOR", target: `[id^="react-select-${qId}-option"]`, timeoutMs: 1500 });
+        const opts = await readVisibleOptions(context.execute, qId);
+
+        if (isEeoField && opts.length > 0) {
+          // EEO safety: prefer safe decline options over Yes/No to avoid
+          // submitting incorrect sensitive answers (e.g. "I am a veteran").
+          const normalizedOpts = opts.map(o => o.toLowerCase());
+          let safeIdx = -1;
+          for (const seed of EEO_SAFE_DECLINE_SEEDS) {
+            safeIdx = normalizedOpts.findIndex(o => o.includes(seed));
+            if (safeIdx >= 0) break;
+          }
+          if (safeIdx >= 0) {
+            const winSel = `#react-select-${qId}-option-${safeIdx}`;
+            await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
+            answered.push(q.label);
+            record({ question: q.label, answer: opts[safeIdx], source: "combobox_fallback", confidence: 0.3, fieldType: q.type, selector: q.selector, visibleOptions: opts });
+            continue;
+          }
+          // No safe option found — skip this EEO field rather than guess
+          await context.execute({ type: "TYPE", selector: q.selector, value: "", clearFirst: true });
+          skipped.push(q.label);
+          continue;
+        }
+
+        if (opts.length > 0) {
+          const yesMatch = pickBestOption("Yes", opts);
+          if (yesMatch && yesMatch.score >= 50) {
+            const winSel = `#react-select-${qId}-option-${yesMatch.index}`;
+            await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
+            answered.push(q.label);
+            record({ question: q.label, answer: yesMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector, visibleOptions: opts });
+            continue;
+          }
+          const noMatch = pickBestOption("No", opts);
+          if (noMatch && noMatch.score >= 50) {
+            const winSel = `#react-select-${qId}-option-${noMatch.index}`;
+            await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
+            answered.push(q.label);
+            record({ question: q.label, answer: noMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector, visibleOptions: opts });
+            continue;
+          }
+        }
+        await context.execute({ type: "TYPE", selector: q.selector, value: "", clearFirst: true });
+      }
+
+      // ── Tier 4: LLM fallback for text/textarea ──────────────────────
+      if (q.role !== "combobox") {
+        const answerGen = context.data.answerGenerator as AnswerGeneratorService | undefined;
+        if (answerGen) {
+          const fieldLimit = q.maxLength ?? 200;
+          const candidateData = context.data.candidate as Record<string, string> | undefined;
+          const profile = candidateData ? {
+            name: `${candidateData.firstName ?? ""} ${candidateData.lastName ?? ""}`.trim(),
+            email: candidateData.email,
+            phone: candidateData.phone,
+            location: candidateData.location ?? (candidateData.city && candidateData.state
+              ? `${candidateData.city}, ${candidateData.state}`
+              : candidateData.city ?? candidateData.state),
+            yearsOfExperience: 8,
+          } : undefined;
+          const generated = await answerGen.generate(
+            {
+              question: q.label,
+              fieldType: q.type as "text" | "textarea" | "select" | "radio" | "checkbox",
+              jobTitle: context.data.jobTitle as string | undefined,
+              company: context.data.company as string | undefined,
+              maxLength: fieldLimit,
+            },
+            answerBank,
+            profile as never,
+          );
+          if (generated) {
+            const answer = q.maxLength ? generated.answer.slice(0, q.maxLength) : generated.answer;
+            const typeResult = await context.execute({ type: "TYPE", selector: q.selector, value: answer });
+            if (typeResult.success) {
+              answered.push(q.label);
+              record({ question: q.label, answer, source: "llm", confidence: generated.confidence, fieldType: q.type, selector: q.selector });
+              continue;
             }
           }
         }
-
-        skipped.push(q.label);
-        continue;
       }
 
-      const { rule, value } = match;
-      if (!value) {
-        skipped.push(q.label);
-        continue;
-      }
-
-      const selector = q.selector;
-      let filled = false;
-
-      // Use the actual field role to pick the interaction strategy.
-      // A rule may declare "text" but the real field is a combobox, or
-      // vice-versa. The DOM role is the source of truth.
-      const useReactSelect =
-        q.role === "combobox"
-          ? true
-          : rule.interaction === "react-select";
-
-      if (useReactSelect) {
-        const fillOk = await fillReactSelect(context.execute, selector, value, rule.searchSeed);
-        if (fillOk) {
-          answered.push(q.label);
-          filled = true;
-        } else {
-          failed.push(q.label);
-        }
-      } else {
-        const answer = q.maxLength ? value.slice(0, q.maxLength) : value;
-        const typeResult = await context.execute({
-          type: "TYPE",
-          selector,
-          value: answer,
-        });
-
-        if (typeResult.success) {
-          answered.push(q.label);
-          filled = true;
-        } else {
-          failed.push(q.label);
-        }
-      }
+      skipped.push(q.label);
     }
 
     if (context.captureArtifact) {
@@ -362,6 +480,7 @@ export const answerScreeningQuestionsState: StateHandler = {
     context.data.screeningAnswered = answered;
     context.data.screeningSkipped = skipped;
     context.data.screeningFailed = failed;
+    context.data.screeningAnswers = screeningAnswers;
 
     return {
       outcome: "success",
@@ -370,6 +489,7 @@ export const answerScreeningQuestionsState: StateHandler = {
         screeningAnswered: answered,
         screeningSkipped: skipped,
         screeningFailed: failed,
+        screeningAnswers,
       },
     };
   },

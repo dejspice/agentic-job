@@ -23,7 +23,7 @@
  */
 
 import type { PrismaClient, RunOutcome as PrismaRunOutcome } from "@prisma/client";
-import type { ArtifactUrls, RunOutcome, RunCost } from "@dejsol/core";
+import type { ArtifactUrls, RunOutcome, RunCost, AnswerBank } from "@dejsol/core";
 import type { VerificationQueueItem, KpiPeriod, KpiSnapshot, KpiValue } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +76,12 @@ export interface RunResultPayload {
    * Maps to apply_runs.cost_json.  Defaults to {} when not provided.
    */
   costJson?: Record<string, unknown>;
+
+  /**
+   * Structured screening answers produced during the run.
+   * Maps to apply_runs.answers_json.  Defaults to {} when not provided.
+   */
+  answersJson?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +116,7 @@ export async function persistRunResult(
     errors,
     artifactUrls,
     costJson = {},
+    answersJson = {},
   } = payload;
 
   // --- Build state_history_json ---
@@ -153,10 +160,64 @@ export async function persistRunResult(
       errorLogJson: errorLogJson as any,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       costJson: costJson as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      answersJson: answersJson as any,
       confirmationId: confirmationId ?? null,
       completedAt: new Date(),
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Candidate answer bank persistence
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the candidate's answer bank from the database.
+ *
+ * Returns the parsed AnswerBank (which may be empty {}).
+ * Returns {} if the candidate does not exist.
+ */
+export async function loadAnswerBank(
+  candidateId: string,
+  prisma: PrismaClient,
+): Promise<AnswerBank> {
+  const candidate = await prisma.candidate.findUnique({
+    where: { id: candidateId },
+    select: { answerBankJson: true },
+  });
+  if (!candidate) return {};
+  return (candidate.answerBankJson as unknown as AnswerBank) ?? {};
+}
+
+/**
+ * Merge updated answers into the candidate's answer bank.
+ *
+ * Performs a read-merge-write: loads the existing bank, shallow-merges the
+ * new entries (keyed by normalized question), and writes back.
+ *
+ * This is additive — existing entries not present in `newEntries` are preserved.
+ * Entries with the same key are overwritten by the newer value.
+ *
+ * Idempotent: calling with the same newEntries produces the same final state.
+ */
+export async function persistAnswerBank(
+  candidateId: string,
+  newEntries: AnswerBank,
+  prisma: PrismaClient,
+): Promise<AnswerBank> {
+  const existing = await loadAnswerBank(candidateId, prisma);
+  const merged: AnswerBank = { ...existing, ...newEntries };
+
+  await prisma.candidate.update({
+    where: { id: candidateId },
+    data: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      answerBankJson: merged as any,
+    },
+  });
+
+  return merged;
 }
 
 // ---------------------------------------------------------------------------

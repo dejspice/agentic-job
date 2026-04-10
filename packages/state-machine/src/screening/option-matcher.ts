@@ -32,7 +32,9 @@ const ANSWER_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
   // ── Yes / No variants ────────────────────────────────────────────────
   ["yes",             ["yes, i do", "yes, i have", "yes, i am", "yes, i can", "yes, i will"]],
   ["no",              ["no, i do not", "no, i don't", "no, i have not", "no, i haven't",
-                       "no, i am not", "no, i'm not", "no, i will not", "no, i won't"]],
+                       "no, i am not", "no, i'm not", "no, i will not", "no, i won't",
+                       "i have not previously been employed",
+                       "i have not previously", "not previously employed"]],
 
   // ── Country name variants ──────────────────────────────────────────
   ["united states",   ["usa", "us", "u.s.", "u.s.a.", "united states of america", "america"]],

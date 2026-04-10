@@ -60,4 +60,19 @@ export {
   type PlannerService,
 } from "./planner.js";
 
+export {
+  createAnswerAdjudicator,
+  createNoOpAdjudicator,
+  type AdjudicationInput,
+  type AdjudicationOutput,
+  type AnswerAdjudicatorService,
+} from "./answer-adjudicator.js";
+
+export {
+  applyPolicy,
+  type PolicyInput,
+  type PolicyOutput,
+  type PolicyDecision,
+} from "./adjudication-policy.js";
+
 export { createClaudeProvider } from "./providers/claude.js";

@@ -35,16 +35,18 @@ const REQUIRED_FIELDS: ReadonlyArray<keyof DemoCandidateProfile> = [
 /**
  * Load the candidate profile for demo/google pipeline runs.
  *
- * Reads from candidate.json in the same directory as this module.
+ * Resolution order:
+ *   1. overridePath argument (for programmatic callers)
+ *   2. CANDIDATE_PROFILE env var (absolute or relative path)
+ *   3. Default: src/demo/candidate.json (relative to cwd)
+ *
  * Validates that all required fields are present and non-empty.
  * Throws with a clear message if any field is missing.
  */
 export function loadCandidateProfile(overridePath?: string): DemoCandidateProfile {
-  // Resolve candidate.json relative to the source tree.
-  // The runner is always invoked from the packages/workflows directory,
-  // so resolve from cwd + src/demo/ as the canonical location.
-  const defaultPath = overridePath ?? resolve(process.cwd(), "src", "demo", "candidate.json");
-  const filePath = defaultPath;
+  const envPath = process.env["CANDIDATE_PROFILE"]?.trim();
+  const defaultPath = resolve(process.cwd(), "src", "demo", "candidate.json");
+  const filePath = overridePath ?? (envPath ? resolve(envPath) : defaultPath);
 
   let raw: string;
   try {

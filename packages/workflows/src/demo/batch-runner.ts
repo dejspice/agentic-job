@@ -19,19 +19,39 @@ import { writeRowResult } from "../connectors/sheet-writer.js";
 import type { WritebackStatus } from "../connectors/sheet-writer.js";
 import type { SheetApplicationRow } from "../connectors/sheet-reader.js";
 
+export interface ScreeningAnswerRecord {
+  question: string;
+  answer: string;
+  source: string;
+  ruleName?: string;
+  confidence: number;
+  visibleOptions?: string[];
+  adjudication?: {
+    appropriatenessScore: number;
+    riskLevel: string;
+    recommendation: string;
+    reason: string;
+  };
+}
+
 export interface BatchRunResult {
   runId: string;
   jobUrl: string;
   candidate: string;
+  candidateEmail?: string;
+  company?: string;
+  jobTitle?: string;
   outcome: "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED" | "SKIPPED";
   durationMs: number;
   verificationRequired: boolean;
   error?: string;
   sheetRowIndex?: number;
+  screeningAnswers?: ScreeningAnswerRecord[];
 }
 
 export interface BatchSummary {
   batchId: string;
+  candidateName?: string;
   startedAt: string;
   completedAt: string;
   totalJobs: number;
@@ -61,6 +81,7 @@ export async function runBatch(
     artifactDir?: string;
     outputPath?: string;
     quiet?: boolean;
+    headless?: boolean;
     onProgress?: (completed: number, total: number, result: BatchRunResult) => void;
   },
 ): Promise<BatchSummary> {
@@ -70,6 +91,7 @@ export async function runBatch(
     options?.outputPath ?? "./artifacts-batch/run-results.json",
   );
   const quiet = options?.quiet ?? false;
+  const headless = options?.headless ?? (process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false");
 
   const results: BatchRunResult[] = [];
   const startedAt = new Date().toISOString();
@@ -100,6 +122,7 @@ export async function runBatch(
         {
           artifactDir,
           quiet,
+          headless,
         },
       );
     } catch (err) {
@@ -169,6 +192,7 @@ export async function runGoogleBatch(
     outputPath?: string;
     quiet?: boolean;
     headless?: boolean;
+    candidateName?: string;
     candidateProfile?: CandidateProfileFields;
     onProgress?: (completed: number, total: number, result: BatchRunResult) => void;
   },
@@ -179,6 +203,7 @@ export async function runGoogleBatch(
     options.outputPath ?? "./artifacts-batch/run-results.json",
   );
   const quiet = options.quiet ?? false;
+  const headless = options.headless ?? (process.env["BROWSER_HEADLESS"]?.toLowerCase() !== "false");
 
   const results: BatchRunResult[] = [];
   const startedAt = new Date().toISOString();
@@ -202,6 +227,9 @@ export async function runGoogleBatch(
         runId: randomUUID(),
         jobUrl: row.jobUrl,
         candidate: candidateName,
+        candidateEmail: row.email,
+        company: row.company,
+        jobTitle: row.jobTitle,
         outcome: "SKIPPED",
         durationMs,
         verificationRequired: false,
@@ -245,6 +273,9 @@ export async function runGoogleBatch(
         runId: randomUUID(),
         jobUrl: row.jobUrl,
         candidate: candidateName,
+        candidateEmail: row.email,
+        company: row.company,
+        jobTitle: row.jobTitle,
         outcome: "FAILED",
         durationMs,
         verificationRequired: false,
@@ -298,7 +329,7 @@ export async function runGoogleBatch(
         {
           artifactDir,
           quiet,
-          headless: options.headless,
+          headless,
         },
       );
     } catch (err) {
@@ -312,15 +343,29 @@ export async function runGoogleBatch(
 
     const durationMs = Date.now() - start;
 
+    const screeningAnswers: ScreeningAnswerRecord[] | undefined = appResult.screeningAnswers?.map(a => ({
+      question: a.question,
+      answer: a.answer,
+      source: a.source,
+      ...(a.ruleName ? { ruleName: a.ruleName } : {}),
+      confidence: a.confidence,
+      ...(a.visibleOptions ? { visibleOptions: a.visibleOptions } : {}),
+      ...(a.adjudication ? { adjudication: a.adjudication } : {}),
+    }));
+
     const batchResult: BatchRunResult = {
       runId: appResult.runId,
       jobUrl: row.jobUrl,
       candidate: candidateName,
+      candidateEmail: row.email,
+      company: row.company,
+      jobTitle: row.jobTitle,
       outcome: appResult.outcome,
       durationMs,
       verificationRequired: appResult.verificationRequired,
       sheetRowIndex: row.rowIndex,
       ...(appResult.error ? { error: appResult.error } : {}),
+      ...(screeningAnswers && screeningAnswers.length > 0 ? { screeningAnswers } : {}),
     };
 
     results.push(batchResult);
@@ -358,7 +403,7 @@ export async function runGoogleBatch(
     }
   }
 
-  return finalizeBatch(batchId, startedAt, results, rows.length, outputPath);
+  return finalizeBatch(batchId, startedAt, results, rows.length, outputPath, options.candidateName);
 }
 
 function finalizeBatch(
@@ -367,6 +412,7 @@ function finalizeBatch(
   results: BatchRunResult[],
   totalJobs: number,
   outputPath: string,
+  candidateName?: string,
 ): BatchSummary {
   const completedAt = new Date().toISOString();
 
@@ -383,6 +429,7 @@ function finalizeBatch(
 
   const summary: BatchSummary = {
     batchId,
+    ...(candidateName ? { candidateName } : {}),
     startedAt,
     completedAt,
     totalJobs,
