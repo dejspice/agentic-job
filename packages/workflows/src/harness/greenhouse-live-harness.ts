@@ -266,7 +266,7 @@ export interface ApplicationInput {
 }
 
 export interface ApplicationResult {
-  outcome: "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED";
+  outcome: "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED" | "SKIPPED";
   runId: string;
   verificationRequired: boolean;
   error?: string;
@@ -385,6 +385,8 @@ export async function runGreenhouseApplication(
     let outcome: ApplicationResult["outcome"];
     if (result.outcome === "success") {
       outcome = verificationRequired ? "VERIFICATION_REQUIRED" : "SUBMITTED";
+    } else if (result.outcome === "skipped") {
+      outcome = "SKIPPED";
     } else {
       outcome = "FAILED";
     }

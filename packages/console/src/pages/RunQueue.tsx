@@ -18,7 +18,7 @@ interface RunQueueItem {
   errorLogJson?: Array<{ state: string; message: string }>;
 }
 
-type FilterKey = "ALL" | "ACTION_NEEDED" | "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED";
+type FilterKey = "ALL" | "ACTION_NEEDED" | "SUBMITTED" | "VERIFICATION_REQUIRED" | "FAILED" | "SKIPPED";
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "ALL", label: "All" },
@@ -26,6 +26,7 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "SUBMITTED", label: "Submitted" },
   { key: "VERIFICATION_REQUIRED", label: "Verify" },
   { key: "FAILED", label: "Failed" },
+  { key: "SKIPPED", label: "Skipped" },
 ];
 
 async function fetchRuns(outcome?: string): Promise<RunQueueItem[]> {

@@ -248,6 +248,17 @@ export async function executeGreenhouseHappyPath({
       };
     }
 
+    if (stateResult.outcome === "skipped") {
+      return {
+        outcome: "skipped",
+        statesCompleted,
+        finalState: stateName,
+        data: stateContext.data,
+        artifacts: capturedArtifacts,
+        error: stateResult.error,
+      };
+    }
+
     if (stateResult.outcome === "failure") {
       // Activity-level safety-net: capture a failure screenshot if the
       // state handler didn't already produce one (best-effort, never masks

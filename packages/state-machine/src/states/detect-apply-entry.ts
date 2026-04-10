@@ -86,6 +86,15 @@ export const detectApplyEntryState: StateHandler = {
         context.data.artifacts = context.data.artifacts ?? [];
         (context.data.artifacts as unknown[]).push(ref);
       }
+
+      // If open-job-page positively identified the posting as expired,
+      // skip rather than fail.  If the page looks valid but no apply
+      // entry was found, that's a genuine engine gap → keep as failure.
+      if (context.data.pageExpired) {
+        const reason = (context.data.skipReason as string) ?? "Job posting expired or removed";
+        return { outcome: "skipped", error: reason };
+      }
+
       return { outcome: "failure", error: "Apply entry point not found" };
     }
 
