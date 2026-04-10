@@ -12,6 +12,7 @@ interface ExtractedField {
   label: string;
   type: string;
   role: string | null;
+  name: string | null;
 }
 
 export const preSubmitCheckState: StateHandler = {
@@ -151,6 +152,55 @@ export const preSubmitCheckState: StateHandler = {
           emptyRequired = recheckFields.filter(
             (f) => f.required && !f.value && f.type !== "file",
           );
+        }
+      }
+    }
+
+    // ── Retry unchecked required checkbox groups ─────────────────────
+    // Group by name attribute (e.g. "question_XXX[]") and check the first
+    // option in each unfilled group.
+    const uncheckedBoxes = emptyRequired.filter((f) => f.type === "checkbox");
+    if (uncheckedBoxes.length > 0 && context.execute) {
+      const groupsByName = new Map<string, ExtractedField[]>();
+      for (const cb of uncheckedBoxes) {
+        const groupKey = cb.name ?? cb.selector;
+        const group = groupsByName.get(groupKey) ?? [];
+        group.push(cb);
+        groupsByName.set(groupKey, group);
+      }
+
+      let anyChecked = false;
+      for (const [, group] of groupsByName) {
+        const first = group[0]!;
+        const checkResult = await context.execute({
+          type: "CHECK",
+          selector: first.selector,
+        });
+        if (checkResult.success) anyChecked = true;
+      }
+
+      if (anyChecked) {
+        const recheck = await context.execute({ type: "EXTRACT_FIELDS" });
+        if (recheck.success && recheck.data) {
+          const recheckFields = (recheck.data as Record<string, unknown>).fields as ExtractedField[];
+
+          // Checkbox groups: if ANY checkbox in a name-group is checked,
+          // the entire group's requirement is satisfied.  Build a set of
+          // satisfied group names so we can exclude unchecked siblings.
+          const satisfiedGroups = new Set<string>();
+          for (const f of recheckFields) {
+            if (f.type === "checkbox" && f.value && f.name) {
+              satisfiedGroups.add(f.name);
+            }
+          }
+
+          emptyRequired = recheckFields.filter((f) => {
+            if (!f.required || f.value || f.type === "file") return false;
+            if (f.type === "checkbox" && f.name && satisfiedGroups.has(f.name)) {
+              return false;
+            }
+            return true;
+          });
         }
       }
     }

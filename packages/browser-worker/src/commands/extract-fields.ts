@@ -38,9 +38,12 @@ export async function executeExtractFields(
         .map((el: any) => {
           let id = "";
           if (el.id) {
-            // Numeric-only IDs are invalid CSS selectors (#1255 throws
-            // SyntaxError). Use attribute selector for those.
-            id = /^\d/.test(el.id) ? `[id="${el.id}"]` : `#${el.id}`;
+            // Use attribute selector for IDs that are invalid as CSS
+            // hash selectors: numeric-only, or containing brackets/special
+            // characters (e.g. Greenhouse checkbox IDs "question_XXX[]_YYY").
+            id = /^\d|[\[\](){}#.+~>:,]/.test(el.id)
+              ? `[id="${el.id}"]`
+              : `#${el.id}`;
           }
           const name = el.name ? `[name="${el.name}"]` : "";
           const selector = id || name || el.tagName.toLowerCase();
