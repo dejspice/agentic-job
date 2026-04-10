@@ -62,6 +62,27 @@ function extractQuestionId(selector: string): string {
   return selector.replace(/^#/, "");
 }
 
+// IDs containing brackets (e.g. "question_123[]") produce invalid CSS when
+// used in #hash selectors.  Use attribute selectors for those.
+const NEEDS_ATTR_SELECTOR = /[\[\](){}#.+~>:,]/;
+
+function cssEscapeValue(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function optionIdSelector(questionId: string, index: number): string {
+  const raw = `react-select-${questionId}-option-${index}`;
+  if (NEEDS_ATTR_SELECTOR.test(raw)) {
+    return `[id="${cssEscapeValue(raw)}"]`;
+  }
+  return `#${raw}`;
+}
+
+function optionIdPrefix(questionId: string): string {
+  const raw = `react-select-${questionId}-option`;
+  return `[id^="${cssEscapeValue(raw)}"]`;
+}
+
 /**
  * Read visible React Select option labels for a specific question.
  *
@@ -74,7 +95,7 @@ async function readVisibleOptions(
 ): Promise<string[]> {
   const labels: string[] = [];
   for (let idx = 0; idx < 50; idx++) {
-    const optSel = `#react-select-${questionId}-option-${idx}`;
+    const optSel = optionIdSelector(questionId, idx);
     const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: idx === 0 ? 500 : 100 });
     if (!exists.success) break;
     const textResult = await execute({ type: "READ_TEXT", selector: optSel });
@@ -108,15 +129,16 @@ export async function fillReactSelect(
   searchSeed?: string,
 ): Promise<boolean> {
   const questionId = extractQuestionId(selector);
-  const specificOptionPrefix = `[id^="react-select-${questionId}-option"]`;
+  const specificOptionPrefix = optionIdPrefix(questionId);
 
   // Type the search seed to open the dropdown and filter options.
   // Using the seed directly (instead of opening with an empty click first)
   // is more reliable across sequential combobox fills — the scrollIntoView +
   // click + 400ms delay in the sequential TYPE gives React Select time to
   // focus and accept keystrokes.
-  const seed = searchSeed
-    ?? desiredValue.substring(0, Math.min(desiredValue.length, 3));
+  const seed = searchSeed !== undefined && searchSeed !== ""
+    ? searchSeed
+    : desiredValue.substring(0, Math.min(desiredValue.length, 3));
 
   if (seed) {
     await execute({ type: "TYPE", selector, value: seed, sequential: true });
@@ -133,8 +155,8 @@ export async function fillReactSelect(
     if (filteredLabels.length > 0) {
       const best = pickBestOption(desiredValue, filteredLabels);
       if (best) {
-        const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
-        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+        const winSel = optionIdSelector(questionId, best.index);
+        await execute({ type: "CLICK", target: { kind: "css", value: winSel } });
         return true;
       }
     }
@@ -159,8 +181,8 @@ export async function fillReactSelect(
     if (allLabels.length > 0) {
       const best = pickBestOption(desiredValue, allLabels);
       if (best) {
-        const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
-        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+        const winSel = optionIdSelector(questionId, best.index);
+        await execute({ type: "CLICK", target: { kind: "css", value: winSel } });
         return true;
       }
     }
@@ -207,7 +229,8 @@ async function verifyComboboxSelection(
   execute: CommandExecutor,
   questionId: string,
 ): Promise<boolean> {
-  const singleValueSel = `#react-select-${questionId}-singleValue`;
+  const svRaw = `react-select-${questionId}-singleValue`;
+  const singleValueSel = NEEDS_ATTR_SELECTOR.test(svRaw) ? `[id="${svRaw}"]` : `#${svRaw}`;
   const checkResult = await execute({ type: "WAIT_FOR", target: singleValueSel, timeoutMs: 500 });
   if (checkResult.success) {
     const textResult = await execute({ type: "READ_TEXT", selector: singleValueSel });
@@ -274,6 +297,7 @@ export const answerScreeningQuestionsState: StateHandler = {
 
     const questions = allFields.filter(
       (f) => (f.selector.startsWith("#question_") && f.label)
+        || (f.selector.startsWith('[id="question_') && f.label)
         || (f.selector.match(/^\[id="\d+"\]$/) && f.label)
         || (GREENHOUSE_EEO_SELECTORS.has(f.selector) && f.label),
     );
@@ -312,10 +336,12 @@ export const answerScreeningQuestionsState: StateHandler = {
         const { rule, value } = match;
         const selector = q.selector;
 
-        const useReactSelect =
-          q.role === "combobox"
-            ? true
-            : rule.interaction === "react-select";
+        // Actual field type takes precedence over rule-declared interaction.
+        // Many rules declare interaction: "react-select" to cover combobox
+        // variants, but the same question can appear as a plain text input
+        // on different boards.  Trying fillReactSelect on a text input fails
+        // silently and the answer is lost.
+        const useReactSelect = q.role === "combobox";
 
         if (useReactSelect) {
           let resolvedSeed = rule.searchSeed;
@@ -384,12 +410,10 @@ export const answerScreeningQuestionsState: StateHandler = {
         const qId = extractQuestionId(q.selector);
         const isEeoField = GREENHOUSE_EEO_SELECTORS.has(q.selector);
         await context.execute({ type: "TYPE", selector: q.selector, value: "", sequential: true });
-        await context.execute({ type: "WAIT_FOR", target: `[id^="react-select-${qId}-option"]`, timeoutMs: 1500 });
+        await context.execute({ type: "WAIT_FOR", target: optionIdPrefix(qId), timeoutMs: 1500 });
         const opts = await readVisibleOptions(context.execute, qId);
 
         if (isEeoField && opts.length > 0) {
-          // EEO safety: prefer safe decline options over Yes/No to avoid
-          // submitting incorrect sensitive answers (e.g. "I am a veteran").
           const normalizedOpts = opts.map(o => o.toLowerCase());
           let safeIdx = -1;
           for (const seed of EEO_SAFE_DECLINE_SEEDS) {
@@ -397,13 +421,12 @@ export const answerScreeningQuestionsState: StateHandler = {
             if (safeIdx >= 0) break;
           }
           if (safeIdx >= 0) {
-            const winSel = `#react-select-${qId}-option-${safeIdx}`;
+            const winSel = optionIdSelector(qId, safeIdx);
             await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
             answered.push(q.label);
             record({ question: q.label, answer: opts[safeIdx], source: "combobox_fallback", confidence: 0.3, fieldType: q.type, selector: q.selector, visibleOptions: opts });
             continue;
           }
-          // No safe option found — skip this EEO field rather than guess
           await context.execute({ type: "TYPE", selector: q.selector, value: "", clearFirst: true });
           skipped.push(q.label);
           continue;
@@ -412,7 +435,7 @@ export const answerScreeningQuestionsState: StateHandler = {
         if (opts.length > 0) {
           const yesMatch = pickBestOption("Yes", opts);
           if (yesMatch && yesMatch.score >= 50) {
-            const winSel = `#react-select-${qId}-option-${yesMatch.index}`;
+            const winSel = optionIdSelector(qId, yesMatch.index);
             await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
             answered.push(q.label);
             record({ question: q.label, answer: yesMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector, visibleOptions: opts });
@@ -420,7 +443,7 @@ export const answerScreeningQuestionsState: StateHandler = {
           }
           const noMatch = pickBestOption("No", opts);
           if (noMatch && noMatch.score >= 50) {
-            const winSel = `#react-select-${qId}-option-${noMatch.index}`;
+            const winSel = optionIdSelector(qId, noMatch.index);
             await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
             answered.push(q.label);
             record({ question: q.label, answer: noMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector, visibleOptions: opts });
@@ -471,6 +494,15 @@ export const answerScreeningQuestionsState: StateHandler = {
       skipped.push(q.label);
     }
 
+    // ── Checkbox groups: required fieldsets with no checked boxes ──────
+    // Greenhouse renders multi-select questions as checkbox groups inside
+    // <fieldset class="checkbox" aria-required="true">.  These are not
+    // captured by EXTRACT_FIELDS (which only sees individual <input>
+    // elements without group context).
+    const checkboxGroupsHandled = await fillRequiredCheckboxGroups(
+      context.execute, answered, record,
+    );
+
     if (context.captureArtifact) {
       const ref = await context.captureArtifact("dom_snapshot", "screening-questions-after");
       context.data.artifacts = context.data.artifacts ?? [];
@@ -485,7 +517,7 @@ export const answerScreeningQuestionsState: StateHandler = {
     return {
       outcome: "success",
       data: {
-        screeningQuestionsFound: questions.length,
+        screeningQuestionsFound: questions.length + checkboxGroupsHandled,
         screeningAnswered: answered,
         screeningSkipped: skipped,
         screeningFailed: failed,
@@ -494,3 +526,124 @@ export const answerScreeningQuestionsState: StateHandler = {
     };
   },
 };
+
+// ---------------------------------------------------------------------------
+// Checkbox group handling
+// ---------------------------------------------------------------------------
+
+interface CheckboxGroupInfo {
+  legend: string;
+  options: Array<{ id: string; label: string; checked: boolean }>;
+}
+
+/**
+ * Find and fill required checkbox groups that have no checked options.
+ *
+ * Greenhouse renders multi-select questions as:
+ *   <fieldset class="checkbox" aria-required="true">
+ *     <legend>Question text *</legend>
+ *     <input type="checkbox" id="question_XXX[]_YYY" ...>
+ *     <label for="question_XXX[]_YYY">Option text</label>
+ *
+ * Uses EXTRACT_FIELDS (page.evaluate) to read the DOM, then CHECK to
+ * tick the first option in each unfilled required group.
+ */
+async function fillRequiredCheckboxGroups(
+  execute: CommandExecutor,
+  answered: string[],
+  record: (entry: ScreeningAnswerEntry) => void,
+): Promise<number> {
+  // Quick probe — skip entirely if no required checkbox fieldsets exist
+  const probe = await execute({
+    type: "WAIT_FOR",
+    target: 'fieldset.checkbox[aria-required="true"]',
+    timeoutMs: 500,
+  });
+  if (!probe.success) return 0;
+
+  // Extract checkbox group info from the DOM in a single evaluate
+  const readResult = await execute({ type: "READ_TEXT", selector: "body" });
+
+  // Use a semantic click with a dummy label to trigger a page.evaluate
+  // Actually, we need to read checkbox group data from the DOM.
+  // The only way to do this without adding a new command is to use
+  // individual WAIT_FOR + READ_TEXT probes per checkbox.
+  // But the fieldset IDs follow the pattern "question_XXXXX[]" which
+  // we can probe from the DOM snapshot evidence we already have.
+
+  // Strategy: find all required checkbox inputs that aren't checked
+  // by probing for known Greenhouse checkbox patterns.
+  // Greenhouse checkbox IDs: question_XXXXX[]_YYYYY
+  // Their name attributes: question_XXXXX[]
+  // The fieldset wrapping them: id="question_XXXXX[]"
+
+  // Read the first unchecked required checkbox and check it
+  // This works because Greenhouse marks ALL checkboxes in a required
+  // group with required="" — we just need to check one per group.
+  const firstUnchecked = await execute({
+    type: "WAIT_FOR",
+    target: 'fieldset.checkbox[aria-required="true"] input[type="checkbox"]:not(:checked)',
+    timeoutMs: 500,
+  });
+  if (!firstUnchecked.success) return 0;
+
+  // Group by name attribute — each name corresponds to one question group.
+  // We need to check at least one checkbox per required group.
+  // Use CHECK command with the first checkbox of each group.
+  // Since we can't enumerate groups without page.evaluate, we'll use
+  // individual probes on known selectors from EXTRACT_FIELDS output.
+
+  // Re-extract fields to find checkbox inputs
+  const extractResult = await execute({ type: "EXTRACT_FIELDS" });
+  if (!extractResult.success || !extractResult.data) return 0;
+
+  const fields = (extractResult.data as Record<string, unknown>).fields as Array<{
+    selector: string; type: string; required: boolean; value: string | null;
+    label: string | null; name: string | null;
+  }>;
+
+  // Find required unchecked checkboxes, group by name
+  const checkboxes = fields.filter(
+    (f) => f.type === "checkbox" && f.required,
+  );
+
+  const groupsByName = new Map<string, typeof checkboxes>();
+  for (const cb of checkboxes) {
+    const name = cb.name ?? cb.selector;
+    const group = groupsByName.get(name) ?? [];
+    group.push(cb);
+    groupsByName.set(name, group);
+  }
+
+  let handled = 0;
+
+  for (const [name, group] of groupsByName) {
+    // EXTRACT_FIELDS now returns value=null for unchecked checkboxes.
+    // Skip if any checkbox in this group has a non-null value (= checked).
+    const anyChecked = group.some((cb) => cb.value != null);
+    if (anyChecked) continue;
+
+    // Check the first option in the group
+    const first = group[0]!;
+    const checkResult = await execute({
+      type: "CHECK",
+      selector: first.selector,
+    });
+
+    if (checkResult.success) {
+      const questionLabel = first.label ?? name;
+      answered.push(questionLabel);
+      record({
+        question: questionLabel,
+        answer: "(first option)",
+        source: "combobox_fallback",
+        confidence: 0.4,
+        fieldType: "checkbox",
+        selector: first.selector,
+      });
+      handled++;
+    }
+  }
+
+  return handled;
+}

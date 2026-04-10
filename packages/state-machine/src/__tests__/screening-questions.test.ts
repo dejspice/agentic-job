@@ -400,7 +400,61 @@ describe("answerScreeningQuestionsState — text field fill", () => {
 // ---------------------------------------------------------------------------
 
 describe("answerScreeningQuestionsState — dropdown fill", () => {
-  it("fills a dropdown question via TYPE(sequential) + EXTRACT_OPTIONS + option CLICK", async () => {
+  it("fills a combobox dropdown via TYPE(sequential) + EXTRACT_OPTIONS + option CLICK", async () => {
+    const commands: WorkerCommand[] = [];
+
+    const ctx: StateContext = {
+      runId: "test-run",
+      jobId: "test-job",
+      candidateId: "test-cand",
+      jobUrl: "https://example.com",
+      currentState: StateName.ANSWER_SCREENING_QUESTIONS,
+      stateHistory: [],
+      data: candidateData(),
+      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
+        commands.push(cmd);
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true,
+            durationMs: 0,
+            data: {
+              fields: [
+                {
+                  selector: "#question_99999",
+                  label: "Do you now or in the future require visa sponsorship?",
+                  type: "text",
+                  role: "combobox",
+                  value: null,
+                  required: true,
+                },
+              ],
+              count: 1,
+            },
+          };
+        }
+        if (cmd.type === "EXTRACT_OPTIONS") {
+          return {
+            success: true,
+            durationMs: 0,
+            data: { options: ["Yes", "No"], count: 2 },
+          };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    };
+
+    const result = await answerScreeningQuestionsState.execute(ctx);
+
+    assert.equal(result.outcome, "success");
+    const typeCmds = commands.filter((c) => c.type === "TYPE" && "sequential" in c && (c as { sequential?: boolean }).sequential);
+    assert.ok(typeCmds.length >= 1, "Expected at least 1 sequential TYPE command (scroll+click+type)");
+    const extractCmds = commands.filter((c) => c.type === "EXTRACT_OPTIONS");
+    assert.ok(extractCmds.length >= 1, "Expected EXTRACT_OPTIONS command");
+    const clickCmds = commands.filter((c) => c.type === "CLICK");
+    assert.ok(clickCmds.length >= 1, "Expected at least 1 CLICK command (select option)");
+  });
+
+  it("fills a text input via plain TYPE when rule declares react-select but field is not a combobox", async () => {
     const commands: WorkerCommand[] = [];
 
     const ctx: StateContext = {
@@ -431,13 +485,6 @@ describe("answerScreeningQuestionsState — dropdown fill", () => {
             },
           };
         }
-        if (cmd.type === "EXTRACT_OPTIONS") {
-          return {
-            success: true,
-            durationMs: 0,
-            data: { options: ["Yes", "No"], count: 2 },
-          };
-        }
         return { success: true, durationMs: 0 };
       },
     };
@@ -445,12 +492,11 @@ describe("answerScreeningQuestionsState — dropdown fill", () => {
     const result = await answerScreeningQuestionsState.execute(ctx);
 
     assert.equal(result.outcome, "success");
-    const typeCmds = commands.filter((c) => c.type === "TYPE" && "sequential" in c && (c as { sequential?: boolean }).sequential);
-    assert.ok(typeCmds.length >= 1, "Expected at least 1 sequential TYPE command (scroll+click+type)");
-    const extractCmds = commands.filter((c) => c.type === "EXTRACT_OPTIONS");
-    assert.ok(extractCmds.length >= 1, "Expected EXTRACT_OPTIONS command");
-    const clickCmds = commands.filter((c) => c.type === "CLICK");
-    assert.ok(clickCmds.length >= 1, "Expected at least 1 CLICK command (select option)");
+    const typeOnField = commands.find(
+      (c) => c.type === "TYPE" && "selector" in c && (c as { selector: string }).selector === "#question_99999"
+        && !("sequential" in c && (c as { sequential?: boolean }).sequential),
+    );
+    assert.ok(typeOnField, "Should use plain TYPE (not sequential) for text input");
   });
 });
 

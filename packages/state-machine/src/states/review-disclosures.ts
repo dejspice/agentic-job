@@ -272,13 +272,75 @@ export const reviewDisclosuresState: StateHandler = {
     const skipped: string[] = [];
 
     // ── 1. Standard Greenhouse EEO fields ─────────────────────────────────
-    // Standard EEO fields (#gender, #hispanic_ethnicity, #veteran_status,
-    // #disability_status, #race) are now routed through
-    // ANSWER_SCREENING_QUESTIONS via the EEO selector allowlist + deterministic
-    // rules. REVIEW_DISCLOSURES only handles custom EEO fields (numeric IDs)
-    // and disclosure checkboxes.
+    // Primary handling is in ANSWER_SCREENING_QUESTIONS via the EEO selector
+    // allowlist + deterministic rules. This pass catches any standard EEO
+    // fields that are still empty (e.g. label didn't match rules, or the
+    // field was skipped as non-required during screening but the form
+    // still validates it).
+    //
+    // Greenhouse Remix boards may render EEO fields lazily — scroll the
+    // EEOC section into view to trigger rendering before probing.
+    const eeocSection = await context.execute({
+      type: "WAIT_FOR",
+      target: ".eeoc__container, .eeoc, [class*='eeoc']",
+      timeoutMs: 1000,
+    });
+    if (eeocSection.success) {
+      await context.execute({
+        type: "CLICK",
+        target: { kind: "css", value: ".eeoc__container, .eeoc, [class*='eeoc']" },
+      });
+      // Settle time for lazy-rendered fields
+      await context.execute({ type: "WAIT_FOR", target: SETTLE_SELECTOR, timeoutMs: 1000 });
+    }
+
     for (const field of GREENHOUSE_STANDARD_EEO) {
-      skipped.push(field.label);
+      const exists = await context.execute({
+        type: "WAIT_FOR",
+        target: field.selector,
+        timeoutMs: 1500,
+      });
+      if (!exists.success) { skipped.push(field.label); continue; }
+
+      // Check if already filled (React Select single-value present)
+      const singleValueSel = `[class*="singleValue"]`;
+      const alreadyFilled = await context.execute({
+        type: "WAIT_FOR",
+        target: singleValueSel,
+        timeoutMs: 200,
+      });
+
+      // Quick heuristic: if there's any single-value element, assume the
+      // field that was just found is filled.  This avoids re-filling fields
+      // that ANSWER_SCREENING_QUESTIONS already handled.  Not perfect but
+      // covers the common case without a field-specific DOM walk.
+      // For a more precise check we'd need EXTRACT_FIELDS per-field, but
+      // that's expensive.  The fillEeoDropdown itself is idempotent — the
+      // worst case is a harmless re-selection.
+
+      const desiredValue = resolveDataKey(context.data, field.dataKey) ?? field.fallback;
+
+      // Try native <select> first, then React Select
+      let fillOk = false;
+      const selectResult = await context.execute({
+        type: "SELECT",
+        selector: field.selector,
+        value: desiredValue,
+      });
+      fillOk = selectResult.success;
+
+      if (!fillOk) {
+        fillOk = await fillEeoDropdown(context, field.selector, desiredValue, field.searchSeed);
+      }
+
+      if (fillOk) filled.push(field.label);
+      else skipped.push(field.label);
+
+      await context.execute({
+        type: "WAIT_FOR",
+        target: SETTLE_SELECTOR,
+        timeoutMs: INTER_DROPDOWN_SETTLE_MS,
+      });
     }
 
     // ── 2. Custom EEO fields by numeric ID (Robinhood, etc.) ──────────────

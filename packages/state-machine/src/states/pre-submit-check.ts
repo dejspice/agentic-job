@@ -12,6 +12,8 @@ interface ExtractedField {
   label: string;
   type: string;
   role: string | null;
+  name: string | null;
+  maxLength: number | null;
 }
 
 export const preSubmitCheckState: StateHandler = {
@@ -59,7 +61,7 @@ export const preSubmitCheckState: StateHandler = {
     // Instead of failing immediately, retry each empty combobox once
     // with a fresh interaction cycle.
     const retryable = emptyRequired.filter(
-      (f) => f.role === "combobox" && f.selector.startsWith("#question_"),
+      (f) => f.role === "combobox" && (f.selector.startsWith("#question_") || f.selector.startsWith('[id="question_')),
     );
 
     if (retryable.length > 0 && context.execute) {
@@ -121,10 +123,190 @@ export const preSubmitCheckState: StateHandler = {
       }
     }
 
+    // ── Retry education autocomplete fields (school, degree, discipline) ──
+    const EDUCATION_FIELD_MAP: Record<string, string> = {
+      "#school--0": "school",
+      "#degree--0": "degree",
+      "#discipline--0": "discipline",
+    };
+    const emptyEduFields = emptyRequired.filter(
+      (f) => f.role === "combobox" && EDUCATION_FIELD_MAP[f.selector],
+    );
+
+    if (emptyEduFields.length > 0 && context.execute) {
+      const candidate = context.data.candidate as Record<string, string> | undefined;
+      const retriedEdu: string[] = [];
+
+      for (const field of emptyEduFields) {
+        const dataKey = EDUCATION_FIELD_MAP[field.selector]!;
+        const value = candidate?.[dataKey];
+        if (!value) continue;
+
+        const ok = await fillReactSelect(context.execute, field.selector, value);
+        if (ok) retriedEdu.push(field.selector);
+      }
+
+      if (retriedEdu.length > 0) {
+        const recheck = await context.execute({ type: "EXTRACT_FIELDS" });
+        if (recheck.success && recheck.data) {
+          const recheckFields = (recheck.data as Record<string, unknown>).fields as ExtractedField[];
+          emptyRequired = recheckFields.filter(
+            (f) => f.required && !f.value && f.type !== "file",
+          );
+        }
+      }
+    }
+
+    // ── Retry empty standard EEO combobox fields ───────────────────
+    // EEO fields (#gender, #race, etc.) are rendered lazily on some
+    // Greenhouse boards and may not exist when earlier states run.
+    // By PRE_SUBMIT_CHECK they are present — retry with fillReactSelect.
+    const EEO_FIELD_DEFAULTS: Record<string, { value: string; seed: string }> = {
+      "#gender": { value: "Male", seed: "Mal" },
+      "#race": { value: "Asian", seed: "Asian" },
+      "#hispanic_ethnicity": { value: "No", seed: "No" },
+      "#veteran_status": { value: "I am not a protected veteran", seed: "not a protected" },
+      "#disability_status": { value: "No, I do not have a disability and have not had one in the past", seed: "do not have" },
+    };
+    const emptyEeoFields = emptyRequired.filter(
+      (f) => f.role === "combobox" && EEO_FIELD_DEFAULTS[f.selector],
+    );
+
+    if (emptyEeoFields.length > 0 && context.execute) {
+      const candidate = context.data.candidate as Record<string, string> | undefined;
+      let anyFilled = false;
+
+      for (const field of emptyEeoFields) {
+        const defaults = EEO_FIELD_DEFAULTS[field.selector]!;
+        const value = candidate?.raceEthnicity && field.selector === "#race"
+          ? candidate.raceEthnicity
+          : candidate?.gender && field.selector === "#gender"
+            ? candidate.gender
+            : defaults.value;
+
+        const ok = await fillReactSelect(
+          context.execute, field.selector, value, defaults.seed,
+        );
+        if (ok) anyFilled = true;
+      }
+
+      if (anyFilled) {
+        const recheck = await context.execute({ type: "EXTRACT_FIELDS" });
+        if (recheck.success && recheck.data) {
+          const recheckFields = (recheck.data as Record<string, unknown>).fields as ExtractedField[];
+          emptyRequired = recheckFields.filter(
+            (f) => f.required && !f.value && f.type !== "file",
+          );
+        }
+      }
+    }
+
+    // ── Retry unchecked required checkbox groups ─────────────────────
+    // Group by name attribute (e.g. "question_XXX[]") and check the first
+    // option in each unfilled group.
+    const uncheckedBoxes = emptyRequired.filter((f) => f.type === "checkbox");
+    if (uncheckedBoxes.length > 0 && context.execute) {
+      const groupsByName = new Map<string, ExtractedField[]>();
+      for (const cb of uncheckedBoxes) {
+        const groupKey = cb.name ?? cb.selector;
+        const group = groupsByName.get(groupKey) ?? [];
+        group.push(cb);
+        groupsByName.set(groupKey, group);
+      }
+
+      let anyChecked = false;
+      for (const [, group] of groupsByName) {
+        const first = group[0]!;
+        const checkResult = await context.execute({
+          type: "CHECK",
+          selector: first.selector,
+        });
+        if (checkResult.success) anyChecked = true;
+      }
+
+      if (anyChecked) {
+        const recheck = await context.execute({ type: "EXTRACT_FIELDS" });
+        if (recheck.success && recheck.data) {
+          const recheckFields = (recheck.data as Record<string, unknown>).fields as ExtractedField[];
+
+          // Checkbox groups: if ANY checkbox in a name-group is checked,
+          // the entire group's requirement is satisfied.  Build a set of
+          // satisfied group names so we can exclude unchecked siblings.
+          const satisfiedGroups = new Set<string>();
+          for (const f of recheckFields) {
+            if (f.type === "checkbox" && f.value && f.name) {
+              satisfiedGroups.add(f.name);
+            }
+          }
+
+          emptyRequired = recheckFields.filter((f) => {
+            if (!f.required || f.value || f.type === "file") return false;
+            if (f.type === "checkbox" && f.name && satisfiedGroups.has(f.name)) {
+              return false;
+            }
+            return true;
+          });
+        }
+      }
+    }
+
+    // ── Retry empty text/textarea screening questions via rules ─────
+    // ANSWER_SCREENING_QUESTIONS may have tried fillReactSelect on a plain
+    // text input (rule says react-select but field is text) and failed.
+    // Retry these with a simple TYPE using the deterministic rule value.
+    const emptyTextQuestions = emptyRequired.filter(
+      (f) => (f.type === "text" || f.type === "textarea")
+        && f.label
+        && (f.selector.startsWith("#question_") || f.selector.startsWith('[id="question_') || f.selector.match(/^\[id="\d+"\]$/)),
+    );
+
+    if (emptyTextQuestions.length > 0 && context.execute) {
+      let anyTyped = false;
+      for (const field of emptyTextQuestions) {
+        const match = matchScreeningQuestion(field.label, context.data);
+        if (!match.matched) continue;
+
+        const answer = field.maxLength
+          ? match.value.slice(0, field.maxLength)
+          : match.value;
+        const typeResult = await context.execute({
+          type: "TYPE",
+          selector: field.selector,
+          value: answer,
+          clearFirst: true,
+        });
+        if (typeResult.success) anyTyped = true;
+      }
+
+      if (anyTyped) {
+        const recheck = await context.execute({ type: "EXTRACT_FIELDS" });
+        if (recheck.success && recheck.data) {
+          const recheckFields = (recheck.data as Record<string, unknown>).fields as ExtractedField[];
+          emptyRequired = recheckFields.filter(
+            (f) => f.required && !f.value && f.type !== "file",
+          );
+          // Re-apply checkbox group satisfaction
+          const satisfiedGroups = new Set<string>();
+          for (const f of recheckFields) {
+            if (f.type === "checkbox" && f.value && f.name) satisfiedGroups.add(f.name);
+          }
+          emptyRequired = emptyRequired.filter((f) => {
+            if (f.type === "checkbox" && f.name && satisfiedGroups.has(f.name)) return false;
+            return true;
+          });
+        }
+      }
+    }
+
     if (emptyRequired.length > 0) {
+      // Enrich diagnostics: include the question label alongside the selector
+      const details = emptyRequired.map((f) => {
+        const label = f.label ? ` ("${f.label}")` : "";
+        return `${f.selector}${label}`;
+      });
       return {
         outcome: "failure",
-        error: `Required fields still empty: ${emptyRequired.map((f) => f.selector).join(", ")}`,
+        error: `Required fields still empty: ${details.join(", ")}`,
         data: { emptyRequired: emptyRequired.map((f) => f.selector) },
       };
     }
