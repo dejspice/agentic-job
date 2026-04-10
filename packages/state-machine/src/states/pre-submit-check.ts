@@ -121,6 +121,40 @@ export const preSubmitCheckState: StateHandler = {
       }
     }
 
+    // ── Retry education autocomplete fields (school, degree, discipline) ──
+    const EDUCATION_FIELD_MAP: Record<string, string> = {
+      "#school--0": "school",
+      "#degree--0": "degree",
+      "#discipline--0": "discipline",
+    };
+    const emptyEduFields = emptyRequired.filter(
+      (f) => f.role === "combobox" && EDUCATION_FIELD_MAP[f.selector],
+    );
+
+    if (emptyEduFields.length > 0 && context.execute) {
+      const candidate = context.data.candidate as Record<string, string> | undefined;
+      const retriedEdu: string[] = [];
+
+      for (const field of emptyEduFields) {
+        const dataKey = EDUCATION_FIELD_MAP[field.selector]!;
+        const value = candidate?.[dataKey];
+        if (!value) continue;
+
+        const ok = await fillReactSelect(context.execute, field.selector, value);
+        if (ok) retriedEdu.push(field.selector);
+      }
+
+      if (retriedEdu.length > 0) {
+        const recheck = await context.execute({ type: "EXTRACT_FIELDS" });
+        if (recheck.success && recheck.data) {
+          const recheckFields = (recheck.data as Record<string, unknown>).fields as ExtractedField[];
+          emptyRequired = recheckFields.filter(
+            (f) => f.required && !f.value && f.type !== "file",
+          );
+        }
+      }
+    }
+
     if (emptyRequired.length > 0) {
       return {
         outcome: "failure",

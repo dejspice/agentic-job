@@ -58,17 +58,25 @@ export async function executeExtractFields(
 
           // React Select combobox inputs always have empty .value even when
           // an option is selected (React manages the state, not the DOM).
-          // Try to read the selected value from the .select__single-value
-          // sibling; fall back to the raw el.value.
+          // Walk up the DOM to find the selected-value display element.
+          // Greenhouse uses both plain class names (.select__single-value)
+          // and CSS-modules hashed names (css-*-singleValue), so we query
+          // for both patterns.
           let fieldValue = el.value || null;
           if (role === "combobox" && !fieldValue) {
             const container = el.closest(".select__input-container")
               ?? el.closest("[class*='select']");
-            const singleValue = container
-              ?.parentElement?.querySelector(".select__single-value")
-              ?? container?.closest("[class*='container']")?.querySelector(".select__single-value");
-            if (singleValue) {
-              fieldValue = (singleValue.textContent ?? "").trim() || null;
+            const searchRoot = container?.closest("[class*='container']")
+              ?? container?.parentElement
+              ?? el.parentElement;
+            if (searchRoot) {
+              const singleValue =
+                searchRoot.querySelector(".select__single-value")
+                ?? searchRoot.querySelector("[class*='singleValue']")
+                ?? searchRoot.querySelector("[class*='single-value']");
+              if (singleValue) {
+                fieldValue = (singleValue.textContent ?? "").trim() || null;
+              }
             }
           }
 

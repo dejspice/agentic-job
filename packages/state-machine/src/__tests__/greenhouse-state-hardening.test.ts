@@ -483,3 +483,118 @@ describe("CAPTURE_CONFIRMATION — alternate confirmation selectors", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// 7. Pre-submit check: education autocomplete field retry (#school--0)
+// ---------------------------------------------------------------------------
+
+describe("PRE_SUBMIT_CHECK — education field retry", () => {
+  it("retries #school--0 when initially detected as empty combobox", async () => {
+    let extractCount = 0;
+    const clickedSelectors: string[] = [];
+    const typedSelectors: string[] = [];
+
+    const ctx = baseContext({
+      data: {
+        candidate: {
+          firstName: "Jane",
+          lastName: "Doe",
+          email: "jane@test.com",
+          school: "MIT",
+        },
+      },
+      execute: async (cmd) => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          extractCount++;
+          if (extractCount === 1) {
+            return {
+              success: true,
+              durationMs: 0,
+              data: {
+                fields: [
+                  { selector: "#first_name", type: "text", required: true, value: "Jane", role: null, label: "First name" },
+                  { selector: "#school--0", type: "text", required: true, value: null, role: "combobox", label: "School" },
+                ],
+                count: 2,
+              },
+            };
+          }
+          return {
+            success: true,
+            durationMs: 0,
+            data: {
+              fields: [
+                { selector: "#first_name", type: "text", required: true, value: "Jane", role: null, label: "First name" },
+                { selector: "#school--0", type: "text", required: true, value: "MIT", role: "combobox", label: "School" },
+              ],
+              count: 2,
+            },
+          };
+        }
+        if (cmd.type === "TYPE") {
+          typedSelectors.push((cmd as { selector: string }).selector);
+          return { success: true, durationMs: 0 };
+        }
+        if (cmd.type === "CLICK") {
+          const target = (cmd as Record<string, unknown>).target;
+          if (typeof target === "object" && target !== null) {
+            clickedSelectors.push((target as Record<string, string>).value ?? "");
+          }
+          return { success: true, durationMs: 0 };
+        }
+        if (cmd.type === "WAIT_FOR") {
+          return { success: true, durationMs: 0 };
+        }
+        if (cmd.type === "READ_TEXT") {
+          return { success: true, durationMs: 0, data: { text: "MIT" } };
+        }
+        if (cmd.type === "EXTRACT_OPTIONS") {
+          return { success: true, durationMs: 0, data: { options: ["MIT"], count: 1 } };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    });
+
+    const result = await preSubmitCheckState.execute(ctx);
+
+    assert.equal(result.outcome, "success", `Expected success after retry, got: ${result.error}`);
+    assert.ok(extractCount >= 2, `Expected at least 2 EXTRACT_FIELDS calls (initial + recheck), got ${extractCount}`);
+  });
+
+  it("does not retry education fields when they already have values", async () => {
+    let extractCount = 0;
+
+    const ctx = baseContext({
+      data: {
+        candidate: {
+          firstName: "Jane",
+          lastName: "Doe",
+          email: "jane@test.com",
+          school: "MIT",
+        },
+      },
+      execute: async (cmd) => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          extractCount++;
+          return {
+            success: true,
+            durationMs: 0,
+            data: {
+              fields: [
+                { selector: "#first_name", type: "text", required: true, value: "Jane", role: null, label: "First name" },
+                { selector: "#school--0", type: "text", required: true, value: "MIT", role: "combobox", label: "School" },
+              ],
+              count: 2,
+            },
+          };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    });
+
+    const result = await preSubmitCheckState.execute(ctx);
+
+    assert.equal(result.outcome, "success");
+    assert.equal(extractCount, 1, "Should only call EXTRACT_FIELDS once when all fields have values");
+  });
+});
