@@ -115,8 +115,9 @@ export async function fillReactSelect(
   // is more reliable across sequential combobox fills — the scrollIntoView +
   // click + 400ms delay in the sequential TYPE gives React Select time to
   // focus and accept keystrokes.
-  const seed = searchSeed
-    ?? desiredValue.substring(0, Math.min(desiredValue.length, 3));
+  const seed = searchSeed !== undefined && searchSeed !== ""
+    ? searchSeed
+    : desiredValue.substring(0, Math.min(desiredValue.length, 3));
 
   if (seed) {
     await execute({ type: "TYPE", selector, value: seed, sequential: true });
