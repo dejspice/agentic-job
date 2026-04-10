@@ -183,6 +183,35 @@ export const submitState: StateHandler = {
       return { outcome: "success" };
     }
 
+    // ── Strategy 4: detect inline validation errors ───────────────────
+    // If the form is still showing (submit button present, no navigation),
+    // Greenhouse likely rejected the submission with inline errors.
+    // Extract the error text for a useful diagnostic.
+    const VALIDATION_ERROR_SELECTORS = [
+      "text=is required",
+      "text=This field is required",
+      "text=can't be blank",
+      "text=Please complete",
+      "text=Cover Letter is required",
+    ];
+    const errorMessages: string[] = [];
+    for (const errSel of VALIDATION_ERROR_SELECTORS) {
+      const errCheck = await context.execute({
+        type: "WAIT_FOR", target: errSel, timeoutMs: 500,
+      });
+      if (errCheck.success) {
+        errorMessages.push(errSel.replace("text=", ""));
+      }
+    }
+
+    if (errorMessages.length > 0) {
+      return {
+        outcome: "failure",
+        error: `Form rejected — inline validation: ${errorMessages.join("; ")}`,
+        data: { validationErrors: errorMessages },
+      };
+    }
+
     return {
       outcome: "failure",
       error: "Confirmation page did not appear after submit",
