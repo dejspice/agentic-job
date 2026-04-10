@@ -13,6 +13,7 @@ interface ExtractedField {
   type: string;
   role: string | null;
   name: string | null;
+  maxLength: number | null;
 }
 
 export const preSubmitCheckState: StateHandler = {
@@ -249,10 +250,63 @@ export const preSubmitCheckState: StateHandler = {
       }
     }
 
+    // ── Retry empty text/textarea screening questions via rules ─────
+    // ANSWER_SCREENING_QUESTIONS may have tried fillReactSelect on a plain
+    // text input (rule says react-select but field is text) and failed.
+    // Retry these with a simple TYPE using the deterministic rule value.
+    const emptyTextQuestions = emptyRequired.filter(
+      (f) => (f.type === "text" || f.type === "textarea")
+        && f.label
+        && (f.selector.startsWith("#question_") || f.selector.match(/^\[id="\d+"\]$/)),
+    );
+
+    if (emptyTextQuestions.length > 0 && context.execute) {
+      let anyTyped = false;
+      for (const field of emptyTextQuestions) {
+        const match = matchScreeningQuestion(field.label, context.data);
+        if (!match.matched) continue;
+
+        const answer = field.maxLength
+          ? match.value.slice(0, field.maxLength)
+          : match.value;
+        const typeResult = await context.execute({
+          type: "TYPE",
+          selector: field.selector,
+          value: answer,
+          clearFirst: true,
+        });
+        if (typeResult.success) anyTyped = true;
+      }
+
+      if (anyTyped) {
+        const recheck = await context.execute({ type: "EXTRACT_FIELDS" });
+        if (recheck.success && recheck.data) {
+          const recheckFields = (recheck.data as Record<string, unknown>).fields as ExtractedField[];
+          emptyRequired = recheckFields.filter(
+            (f) => f.required && !f.value && f.type !== "file",
+          );
+          // Re-apply checkbox group satisfaction
+          const satisfiedGroups = new Set<string>();
+          for (const f of recheckFields) {
+            if (f.type === "checkbox" && f.value && f.name) satisfiedGroups.add(f.name);
+          }
+          emptyRequired = emptyRequired.filter((f) => {
+            if (f.type === "checkbox" && f.name && satisfiedGroups.has(f.name)) return false;
+            return true;
+          });
+        }
+      }
+    }
+
     if (emptyRequired.length > 0) {
+      // Enrich diagnostics: include the question label alongside the selector
+      const details = emptyRequired.map((f) => {
+        const label = f.label ? ` ("${f.label}")` : "";
+        return `${f.selector}${label}`;
+      });
       return {
         outcome: "failure",
-        error: `Required fields still empty: ${emptyRequired.map((f) => f.selector).join(", ")}`,
+        error: `Required fields still empty: ${details.join(", ")}`,
         data: { emptyRequired: emptyRequired.map((f) => f.selector) },
       };
     }

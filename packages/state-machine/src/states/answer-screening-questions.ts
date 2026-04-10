@@ -313,10 +313,12 @@ export const answerScreeningQuestionsState: StateHandler = {
         const { rule, value } = match;
         const selector = q.selector;
 
-        const useReactSelect =
-          q.role === "combobox"
-            ? true
-            : rule.interaction === "react-select";
+        // Actual field type takes precedence over rule-declared interaction.
+        // Many rules declare interaction: "react-select" to cover combobox
+        // variants, but the same question can appear as a plain text input
+        // on different boards.  Trying fillReactSelect on a text input fails
+        // silently and the answer is lost.
+        const useReactSelect = q.role === "combobox";
 
         if (useReactSelect) {
           let resolvedSeed = rule.searchSeed;

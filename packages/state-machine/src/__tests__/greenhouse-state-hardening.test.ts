@@ -598,3 +598,133 @@ describe("PRE_SUBMIT_CHECK — education field retry", () => {
     assert.equal(extractCount, 1, "Should only call EXTRACT_FIELDS once when all fields have values");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 8. Pre-submit check: text field rescue via deterministic rules
+// ---------------------------------------------------------------------------
+
+describe("PRE_SUBMIT_CHECK — text field rescue", () => {
+  it("retries empty text question via deterministic rule match", async () => {
+    let extractCount = 0;
+    const typedValues: Record<string, string> = {};
+
+    const ctx = baseContext({
+      data: {
+        candidate: {
+          firstName: "Jane",
+          lastName: "Doe",
+          email: "jane@test.com",
+        },
+      },
+      execute: async (cmd) => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          extractCount++;
+          if (extractCount === 1) {
+            return {
+              success: true, durationMs: 0,
+              data: {
+                fields: [
+                  { selector: "#first_name", type: "text", required: true, value: "Jane", role: null, label: "First name", name: null, maxLength: null },
+                  { selector: "#question_123", type: "text", required: true, value: null, role: null, label: "How did you hear about this job?", name: null, maxLength: 255 },
+                ],
+                count: 2,
+              },
+            };
+          }
+          return {
+            success: true, durationMs: 0,
+            data: {
+              fields: [
+                { selector: "#first_name", type: "text", required: true, value: "Jane", role: null, label: "First name", name: null, maxLength: null },
+                { selector: "#question_123", type: "text", required: true, value: "Other", role: null, label: "How did you hear about this job?", name: null, maxLength: 255 },
+              ],
+              count: 2,
+            },
+          };
+        }
+        if (cmd.type === "TYPE" && "selector" in cmd && "value" in cmd) {
+          typedValues[(cmd as { selector: string }).selector] = (cmd as { value: string }).value;
+          return { success: true, durationMs: 0 };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    });
+
+    const result = await preSubmitCheckState.execute(ctx);
+    assert.equal(result.outcome, "success", `Expected success, got: ${result.error}`);
+    assert.equal(typedValues["#question_123"], "Other", "Should have typed deterministic rule answer");
+  });
+
+  it("fails with label in diagnostic when text question has no rule match", async () => {
+    const ctx = baseContext({
+      execute: async (cmd) => {
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true, durationMs: 0,
+            data: {
+              fields: [
+                { selector: "#first_name", type: "text", required: true, value: "Jane", role: null, label: "First name", name: null, maxLength: null },
+                { selector: "#question_999", type: "text", required: true, value: null, role: null, label: "Describe your favorite sandwich", name: null, maxLength: null },
+              ],
+              count: 2,
+            },
+          };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    });
+
+    const result = await preSubmitCheckState.execute(ctx);
+    assert.equal(result.outcome, "failure");
+    assert.ok(
+      result.error?.includes("Describe your favorite sandwich"),
+      `Expected label in error diagnostic, got: ${result.error}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. Answer screening: text field with react-select rule uses TYPE not fillReactSelect
+// ---------------------------------------------------------------------------
+
+describe("ANSWER_SCREENING_QUESTIONS — text field interaction override", () => {
+  it("uses TYPE for text input even when rule declares react-select interaction", async () => {
+    const commands: Array<{ type: string; selector?: string; value?: string }> = [];
+
+    const ctx = baseContext({
+      data: {
+        candidate: { firstName: "Jane", lastName: "Doe", email: "jane@test.com" },
+      },
+      execute: async (cmd) => {
+        commands.push(cmd as typeof commands[0]);
+        if (cmd.type === "EXTRACT_FIELDS") {
+          return {
+            success: true, durationMs: 0,
+            data: {
+              fields: [
+                { selector: "#question_abc", type: "text", required: true, value: null, role: null, label: "How did you hear about this job?", name: null, maxLength: 255 },
+              ],
+              count: 1,
+            },
+          };
+        }
+        return { success: true, durationMs: 0 };
+      },
+    });
+
+    // Import the state dynamically
+    const { answerScreeningQuestionsState } = await import("../states/answer-screening-questions.js");
+    await answerScreeningQuestionsState.execute(ctx);
+
+    const typeOnQuestion = commands.find(
+      c => c.type === "TYPE" && c.selector === "#question_abc",
+    );
+    assert.ok(typeOnQuestion, "Should use TYPE for text input, not fillReactSelect");
+    assert.equal(typeOnQuestion?.value, "Other", "Should type the deterministic rule answer");
+
+    const reactSelectClick = commands.find(
+      c => c.type === "CLICK" && JSON.stringify(c).includes("react-select"),
+    );
+    assert.ok(!reactSelectClick, "Should NOT attempt React Select interaction on a text input");
+  });
+});
