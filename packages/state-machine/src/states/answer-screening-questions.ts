@@ -471,6 +471,15 @@ export const answerScreeningQuestionsState: StateHandler = {
       skipped.push(q.label);
     }
 
+    // ── Checkbox groups: required fieldsets with no checked boxes ──────
+    // Greenhouse renders multi-select questions as checkbox groups inside
+    // <fieldset class="checkbox" aria-required="true">.  These are not
+    // captured by EXTRACT_FIELDS (which only sees individual <input>
+    // elements without group context).
+    const checkboxGroupsHandled = await fillRequiredCheckboxGroups(
+      context.execute, answered, record,
+    );
+
     if (context.captureArtifact) {
       const ref = await context.captureArtifact("dom_snapshot", "screening-questions-after");
       context.data.artifacts = context.data.artifacts ?? [];
@@ -485,7 +494,7 @@ export const answerScreeningQuestionsState: StateHandler = {
     return {
       outcome: "success",
       data: {
-        screeningQuestionsFound: questions.length,
+        screeningQuestionsFound: questions.length + checkboxGroupsHandled,
         screeningAnswered: answered,
         screeningSkipped: skipped,
         screeningFailed: failed,
@@ -494,3 +503,124 @@ export const answerScreeningQuestionsState: StateHandler = {
     };
   },
 };
+
+// ---------------------------------------------------------------------------
+// Checkbox group handling
+// ---------------------------------------------------------------------------
+
+interface CheckboxGroupInfo {
+  legend: string;
+  options: Array<{ id: string; label: string; checked: boolean }>;
+}
+
+/**
+ * Find and fill required checkbox groups that have no checked options.
+ *
+ * Greenhouse renders multi-select questions as:
+ *   <fieldset class="checkbox" aria-required="true">
+ *     <legend>Question text *</legend>
+ *     <input type="checkbox" id="question_XXX[]_YYY" ...>
+ *     <label for="question_XXX[]_YYY">Option text</label>
+ *
+ * Uses EXTRACT_FIELDS (page.evaluate) to read the DOM, then CHECK to
+ * tick the first option in each unfilled required group.
+ */
+async function fillRequiredCheckboxGroups(
+  execute: CommandExecutor,
+  answered: string[],
+  record: (entry: ScreeningAnswerEntry) => void,
+): Promise<number> {
+  // Quick probe — skip entirely if no required checkbox fieldsets exist
+  const probe = await execute({
+    type: "WAIT_FOR",
+    target: 'fieldset.checkbox[aria-required="true"]',
+    timeoutMs: 500,
+  });
+  if (!probe.success) return 0;
+
+  // Extract checkbox group info from the DOM in a single evaluate
+  const readResult = await execute({ type: "READ_TEXT", selector: "body" });
+
+  // Use a semantic click with a dummy label to trigger a page.evaluate
+  // Actually, we need to read checkbox group data from the DOM.
+  // The only way to do this without adding a new command is to use
+  // individual WAIT_FOR + READ_TEXT probes per checkbox.
+  // But the fieldset IDs follow the pattern "question_XXXXX[]" which
+  // we can probe from the DOM snapshot evidence we already have.
+
+  // Strategy: find all required checkbox inputs that aren't checked
+  // by probing for known Greenhouse checkbox patterns.
+  // Greenhouse checkbox IDs: question_XXXXX[]_YYYYY
+  // Their name attributes: question_XXXXX[]
+  // The fieldset wrapping them: id="question_XXXXX[]"
+
+  // Read the first unchecked required checkbox and check it
+  // This works because Greenhouse marks ALL checkboxes in a required
+  // group with required="" — we just need to check one per group.
+  const firstUnchecked = await execute({
+    type: "WAIT_FOR",
+    target: 'fieldset.checkbox[aria-required="true"] input[type="checkbox"]:not(:checked)',
+    timeoutMs: 500,
+  });
+  if (!firstUnchecked.success) return 0;
+
+  // Group by name attribute — each name corresponds to one question group.
+  // We need to check at least one checkbox per required group.
+  // Use CHECK command with the first checkbox of each group.
+  // Since we can't enumerate groups without page.evaluate, we'll use
+  // individual probes on known selectors from EXTRACT_FIELDS output.
+
+  // Re-extract fields to find checkbox inputs
+  const extractResult = await execute({ type: "EXTRACT_FIELDS" });
+  if (!extractResult.success || !extractResult.data) return 0;
+
+  const fields = (extractResult.data as Record<string, unknown>).fields as Array<{
+    selector: string; type: string; required: boolean; value: string | null;
+    label: string | null; name: string | null;
+  }>;
+
+  // Find required unchecked checkboxes, group by name
+  const checkboxes = fields.filter(
+    (f) => f.type === "checkbox" && f.required,
+  );
+
+  const groupsByName = new Map<string, typeof checkboxes>();
+  for (const cb of checkboxes) {
+    const name = cb.name ?? cb.selector;
+    const group = groupsByName.get(name) ?? [];
+    group.push(cb);
+    groupsByName.set(name, group);
+  }
+
+  let handled = 0;
+
+  for (const [name, group] of groupsByName) {
+    // EXTRACT_FIELDS now returns value=null for unchecked checkboxes.
+    // Skip if any checkbox in this group has a non-null value (= checked).
+    const anyChecked = group.some((cb) => cb.value != null);
+    if (anyChecked) continue;
+
+    // Check the first option in the group
+    const first = group[0]!;
+    const checkResult = await execute({
+      type: "CHECK",
+      selector: first.selector,
+    });
+
+    if (checkResult.success) {
+      const questionLabel = first.label ?? name;
+      answered.push(questionLabel);
+      record({
+        question: questionLabel,
+        answer: "(first option)",
+        source: "combobox_fallback",
+        confidence: 0.4,
+        fieldType: "checkbox",
+        selector: first.selector,
+      });
+      handled++;
+    }
+  }
+
+  return handled;
+}

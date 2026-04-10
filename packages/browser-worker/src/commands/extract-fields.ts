@@ -68,6 +68,13 @@ export async function executeExtractFields(
           //     .select__input-container
           //       input[role=combobox]   ← el is here, value="" always
           let fieldValue = el.value || null;
+
+          // Checkboxes and radios: value attr is always set (the option
+          // value) but the field is only "filled" when checked.
+          if ((el.type === "checkbox" || el.type === "radio") && !el.checked) {
+            fieldValue = null;
+          }
+
           if (role === "combobox" && !fieldValue) {
             const inputContainer = el.closest(".select__input-container");
             const valueContainer = inputContainer
