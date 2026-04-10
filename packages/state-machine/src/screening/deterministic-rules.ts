@@ -349,7 +349,7 @@ export const SCREENING_RULES: readonly ScreeningRule[] = [
   },
   {
     name: "eeo_race_ethnicity",
-    pattern: /^race$|race.*ethnicity|ethnicity.*race|racial.*background|ethnic.*background|describe.*racial/i,
+    pattern: /^race$|race.*ethnicity|ethnicity.*race|racial.*background|ethnic.*background|describe.*racial|identify.*race|your\s+race/i,
     answer: { kind: "dataKey", path: "candidate.raceEthnicity", fallback: "Asian" },
     interaction: "react-select",
   },

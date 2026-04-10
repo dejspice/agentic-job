@@ -56,6 +56,10 @@ export async function executeExtractFields(
           if (!label && el.closest("label")) {
             label = (el.closest("label").textContent ?? "").trim() || null;
           }
+          // Strip trailing required-marker asterisk(s) — Greenhouse renders
+          // <span aria-hidden="true">*</span> inside labels but textContent
+          // includes it, breaking deterministic pattern matching.
+          if (label) label = label.replace(/\s*\*+\s*$/, "").trim() || null;
 
           const role = el.getAttribute("role") || null;
 
