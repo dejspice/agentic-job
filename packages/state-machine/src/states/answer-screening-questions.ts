@@ -62,6 +62,20 @@ function extractQuestionId(selector: string): string {
   return selector.replace(/^#/, "");
 }
 
+// IDs containing brackets (e.g. "question_123[]") produce invalid CSS when
+// used in #hash selectors.  Use attribute selectors for those.
+const NEEDS_ATTR_SELECTOR = /[\[\](){}#.+~>:,]/;
+
+function optionIdSelector(questionId: string, index: number): string {
+  const raw = `react-select-${questionId}-option-${index}`;
+  return NEEDS_ATTR_SELECTOR.test(raw) ? `[id="${raw}"]` : `#${raw}`;
+}
+
+function optionIdPrefix(questionId: string): string {
+  const raw = `react-select-${questionId}-option`;
+  return `[id^="${raw}"]`;
+}
+
 /**
  * Read visible React Select option labels for a specific question.
  *
@@ -74,7 +88,7 @@ async function readVisibleOptions(
 ): Promise<string[]> {
   const labels: string[] = [];
   for (let idx = 0; idx < 50; idx++) {
-    const optSel = `#react-select-${questionId}-option-${idx}`;
+    const optSel = optionIdSelector(questionId, idx);
     const exists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: idx === 0 ? 500 : 100 });
     if (!exists.success) break;
     const textResult = await execute({ type: "READ_TEXT", selector: optSel });
@@ -108,7 +122,7 @@ export async function fillReactSelect(
   searchSeed?: string,
 ): Promise<boolean> {
   const questionId = extractQuestionId(selector);
-  const specificOptionPrefix = `[id^="react-select-${questionId}-option"]`;
+  const specificOptionPrefix = optionIdPrefix(questionId);
 
   // Type the search seed to open the dropdown and filter options.
   // Using the seed directly (instead of opening with an empty click first)
@@ -134,8 +148,8 @@ export async function fillReactSelect(
     if (filteredLabels.length > 0) {
       const best = pickBestOption(desiredValue, filteredLabels);
       if (best) {
-        const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
-        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+        const winSel = optionIdSelector(questionId, best.index);
+        await execute({ type: "CLICK", target: { kind: "css", value: winSel } });
         return true;
       }
     }
@@ -160,8 +174,8 @@ export async function fillReactSelect(
     if (allLabels.length > 0) {
       const best = pickBestOption(desiredValue, allLabels);
       if (best) {
-        const winnerSelector = `#react-select-${questionId}-option-${best.index}`;
-        await execute({ type: "CLICK", target: { kind: "css", value: winnerSelector } });
+        const winSel = optionIdSelector(questionId, best.index);
+        await execute({ type: "CLICK", target: { kind: "css", value: winSel } });
         return true;
       }
     }
@@ -208,7 +222,8 @@ async function verifyComboboxSelection(
   execute: CommandExecutor,
   questionId: string,
 ): Promise<boolean> {
-  const singleValueSel = `#react-select-${questionId}-singleValue`;
+  const svRaw = `react-select-${questionId}-singleValue`;
+  const singleValueSel = NEEDS_ATTR_SELECTOR.test(svRaw) ? `[id="${svRaw}"]` : `#${svRaw}`;
   const checkResult = await execute({ type: "WAIT_FOR", target: singleValueSel, timeoutMs: 500 });
   if (checkResult.success) {
     const textResult = await execute({ type: "READ_TEXT", selector: singleValueSel });
@@ -387,12 +402,10 @@ export const answerScreeningQuestionsState: StateHandler = {
         const qId = extractQuestionId(q.selector);
         const isEeoField = GREENHOUSE_EEO_SELECTORS.has(q.selector);
         await context.execute({ type: "TYPE", selector: q.selector, value: "", sequential: true });
-        await context.execute({ type: "WAIT_FOR", target: `[id^="react-select-${qId}-option"]`, timeoutMs: 1500 });
+        await context.execute({ type: "WAIT_FOR", target: optionIdPrefix(qId), timeoutMs: 1500 });
         const opts = await readVisibleOptions(context.execute, qId);
 
         if (isEeoField && opts.length > 0) {
-          // EEO safety: prefer safe decline options over Yes/No to avoid
-          // submitting incorrect sensitive answers (e.g. "I am a veteran").
           const normalizedOpts = opts.map(o => o.toLowerCase());
           let safeIdx = -1;
           for (const seed of EEO_SAFE_DECLINE_SEEDS) {
@@ -400,13 +413,12 @@ export const answerScreeningQuestionsState: StateHandler = {
             if (safeIdx >= 0) break;
           }
           if (safeIdx >= 0) {
-            const winSel = `#react-select-${qId}-option-${safeIdx}`;
+            const winSel = optionIdSelector(qId, safeIdx);
             await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
             answered.push(q.label);
             record({ question: q.label, answer: opts[safeIdx], source: "combobox_fallback", confidence: 0.3, fieldType: q.type, selector: q.selector, visibleOptions: opts });
             continue;
           }
-          // No safe option found — skip this EEO field rather than guess
           await context.execute({ type: "TYPE", selector: q.selector, value: "", clearFirst: true });
           skipped.push(q.label);
           continue;
@@ -415,7 +427,7 @@ export const answerScreeningQuestionsState: StateHandler = {
         if (opts.length > 0) {
           const yesMatch = pickBestOption("Yes", opts);
           if (yesMatch && yesMatch.score >= 50) {
-            const winSel = `#react-select-${qId}-option-${yesMatch.index}`;
+            const winSel = optionIdSelector(qId, yesMatch.index);
             await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
             answered.push(q.label);
             record({ question: q.label, answer: yesMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector, visibleOptions: opts });
@@ -423,7 +435,7 @@ export const answerScreeningQuestionsState: StateHandler = {
           }
           const noMatch = pickBestOption("No", opts);
           if (noMatch && noMatch.score >= 50) {
-            const winSel = `#react-select-${qId}-option-${noMatch.index}`;
+            const winSel = optionIdSelector(qId, noMatch.index);
             await context.execute({ type: "CLICK", target: { kind: "css", value: winSel } });
             answered.push(q.label);
             record({ question: q.label, answer: noMatch.label, source: "combobox_fallback", confidence: 0.5, fieldType: q.type, selector: q.selector, visibleOptions: opts });
