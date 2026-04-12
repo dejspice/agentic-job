@@ -18,9 +18,12 @@ RUN npm ci --ignore-scripts
 COPY packages/core/src ./packages/core/src
 COPY packages/api/src ./packages/api/src
 
-# Generate Prisma client + build TypeScript
+# Copy deploy-only tsconfig (core + api only, no other packages)
+COPY tsconfig.base.json tsconfig.deploy.json ./
+
+# Generate Prisma client + build only core + api
 RUN npx prisma generate
-RUN npm run build
+RUN npx tsc -b tsconfig.deploy.json
 
 # --- Production image ---
 FROM node:20-slim
