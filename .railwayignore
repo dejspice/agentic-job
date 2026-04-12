@@ -1,0 +1,11 @@
+packages/console
+packages/browser-worker
+packages/browser-broker
+packages/workflows
+packages/accelerators
+packages/intelligence
+packages/strategy-engine
+packages/drive-connector
+packages/job-intake
+extensions
+scripts
