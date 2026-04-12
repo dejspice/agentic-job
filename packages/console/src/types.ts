@@ -25,6 +25,7 @@ export const RunOutcome = {
   FAILED:                "FAILED",
   ESCALATED:             "ESCALATED",
   CANCELLED:             "CANCELLED",
+  SKIPPED:               "SKIPPED",
 } as const;
 export type RunOutcome = (typeof RunOutcome)[keyof typeof RunOutcome];
 
@@ -74,7 +75,7 @@ export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
 // ---------------------------------------------------------------------------
 
 /** Unified status type used across badges and filters. */
-export type RunStatus = RunOutcome | "IN_PROGRESS" | "REVIEW" | "QUEUED";
+export type RunStatus = RunOutcome | "IN_PROGRESS" | "REVIEW" | "QUEUED" | "SKIPPED";
 
 // ---------------------------------------------------------------------------
 // KPI models

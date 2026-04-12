@@ -171,7 +171,7 @@ async function main(): Promise<void> {
 
     try {
       const statusMap: Record<string, "Applied" | "Failed" | "Skipped" | "Verification Required"> = {
-        SUBMITTED: "Applied", VERIFICATION_REQUIRED: "Verification Required", FAILED: "Failed",
+        SUBMITTED: "Applied", VERIFICATION_REQUIRED: "Verification Required", FAILED: "Failed", SKIPPED: "Skipped",
       };
       await writeRowResult(
         { spreadsheetId: SPREADSHEET_ID, sheetName: SHEET_NAME },

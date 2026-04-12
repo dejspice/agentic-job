@@ -4,4 +4,5 @@ export enum RunOutcome {
   FAILED = "FAILED",
   ESCALATED = "ESCALATED",
   CANCELLED = "CANCELLED",
+  SKIPPED = "SKIPPED",
 }

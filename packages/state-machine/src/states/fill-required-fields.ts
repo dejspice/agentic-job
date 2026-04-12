@@ -305,14 +305,38 @@ async function fillEducationAutocomplete(
     }
   }
 
-  // Last resort: clear, type full value, and press Tab to commit
+  // Last resort: clear, retype, and try to click the first suggestion.
   await execute({ type: "TYPE", selector, value: "", clearFirst: true });
   await execute({ type: "TYPE", selector, value, sequential: true });
-  // Brief wait for async suggestions, then Tab to accept the top suggestion
-  await execute({ type: "WAIT_FOR", target: "[class*='select__menu']", timeoutMs: 3000 });
-  await execute({ type: "TYPE", selector, value: "\t" });
 
-  return true;
+  const menuWait = await execute({
+    type: "WAIT_FOR", target: "[class*='select__menu']", timeoutMs: 3000,
+  });
+  if (menuWait.success) {
+    const firstOpt = `#react-select-${fieldId}-option-0`;
+    const firstExists = await execute({ type: "WAIT_FOR", target: firstOpt, timeoutMs: 500 });
+    if (firstExists.success) {
+      await execute({ type: "CLICK", target: { kind: "css", value: firstOpt } });
+      return true;
+    }
+
+    // Fallback: click any visible option element
+    const FALLBACK_OPT_SELECTORS = [
+      "[id*='-option-']",
+      "[role='option']",
+      ".select__option",
+    ] as const;
+    for (const optSel of FALLBACK_OPT_SELECTORS) {
+      const optExists = await execute({ type: "WAIT_FOR", target: optSel, timeoutMs: 300 });
+      if (optExists.success) {
+        await execute({ type: "CLICK", target: { kind: "css", value: optSel } });
+        return true;
+      }
+    }
+  }
+
+  // No option could be clicked — report failure so upstream can retry.
+  return false;
 }
 
 const MONTH_TO_NUMBER: Record<string, string> = {

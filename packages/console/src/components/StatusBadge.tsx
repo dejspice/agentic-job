@@ -14,6 +14,7 @@ const STATUS_CONFIG: Record<
   FAILED:                { label: "Failed",               bg: "#fee2e2", color: "#b91c1c" },
   ESCALATED:             { label: "Escalated",            bg: "#f3e8ff", color: "#7e22ce" },
   CANCELLED:             { label: "Cancelled",            bg: "#f1f5f9", color: "#475569" },
+  SKIPPED:               { label: "Skipped",              bg: "#f1f5f9", color: "#64748b" },
   IN_PROGRESS:           { label: "In Progress",          bg: "#dbeafe", color: "#1d4ed8" },
   REVIEW:                { label: "Review",               bg: "#fef9c3", color: "#a16207" },
   QUEUED:                { label: "Queued",               bg: "#f1f5f9", color: "#64748b" },
