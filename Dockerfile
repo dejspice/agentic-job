@@ -48,4 +48,5 @@ ENV PORT=4000
 
 EXPOSE 4000
 
-CMD ["node", "packages/api/dist/start.js"]
+# Migrate DB on startup (idempotent), then start server
+CMD ["sh", "-c", "npx prisma migrate deploy && node packages/api/dist/start.js"]
