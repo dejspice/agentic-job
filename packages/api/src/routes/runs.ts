@@ -20,6 +20,19 @@ import type { KpiResponse } from "../types.js";
 export const runsRouter = Router();
 
 /**
+ * Enrich a raw run record with computed fields for external consumers.
+ * Does not mutate the input — returns a new object.
+ */
+function withComputedFields<T extends { outcome?: string | null }>(
+  run: T,
+): T & { actionRequired: boolean } {
+  const outcome = run.outcome ?? null;
+  const actionRequired =
+    outcome === "VERIFICATION_REQUIRED" || outcome === "ESCALATED";
+  return { ...run, actionRequired };
+}
+
+/**
  * POST /api/runs — Start a new apply run (triggers the Temporal workflow).
  *
  * Validates the payload, creates a run record, and starts the
@@ -236,7 +249,7 @@ runsRouter.get("/", async (req, res, next) => {
 
       const response = {
         success: true,
-        data: runs,
+        data: runs.map(withComputedFields),
         pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
       };
       return res.json(response);
@@ -270,7 +283,7 @@ runsRouter.get("/:id", async (req, res, next) => {
         },
       });
       if (!run) throw ApiError.notFound("Run", id);
-      return res.json({ success: true, data: run });
+      return res.json({ success: true, data: withComputedFields(run) });
     }
 
     throw ApiError.notFound("Run", id);

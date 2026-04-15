@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { requestLogging } from "./middleware/request-logging.js";
 import { errorHandler } from "./middleware/error-handler.js";
+import { apiKeyAuth } from "./middleware/api-key-auth.js";
 import { jobsRouter } from "./routes/jobs.js";
 import { runsRouter } from "./routes/runs.js";
 import { candidatesRouter } from "./routes/candidates.js";
@@ -72,12 +73,14 @@ export function createApp(config: ServerConfig = {}): express.Application {
   });
 
   // --- Route modules ---
-  app.use("/api/jobs", jobsRouter);
-  app.use("/api/runs", runsRouter);
-  app.use("/api/candidates", candidatesRouter);
+  // External-facing routes are gated by API key when AUTOPILOT_API_KEY is set.
+  // Internal/operator routes (health, drive-sync, accelerators) are ungated.
+  app.use("/api/runs", apiKeyAuth, runsRouter);
+  app.use("/api/candidates", apiKeyAuth, candidatesRouter);
+  app.use("/api/jobs", apiKeyAuth, jobsRouter);
+  app.use("/api/review", apiKeyAuth, reviewRouter);
   app.use("/api/drive-sync", driveSyncRouter);
   app.use("/api/accelerators", acceleratorsRouter);
-  app.use("/api/review", reviewRouter);
 
   // --- 404 fallback ---
   app.use((_req, res) => {
@@ -100,6 +103,15 @@ export function createApp(config: ServerConfig = {}): express.Application {
  */
 export async function startServer(config: ServerConfig = {}) {
   const port = config.port ?? parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10);
+
+  // CORS origin from env when not explicitly configured.
+  // AUTOPILOT_CORS_ORIGIN supports comma-separated origins.
+  if (!config.corsOrigin) {
+    const envOrigin = process.env["AUTOPILOT_CORS_ORIGIN"]?.trim();
+    if (envOrigin) {
+      config = { ...config, corsOrigin: envOrigin.includes(",") ? envOrigin.split(",").map(s => s.trim()) : envOrigin };
+    }
+  }
 
   // Wire the singleton Prisma client when none is explicitly provided.
   // The dynamic import avoids loading the @prisma/client at module evaluation

@@ -137,6 +137,63 @@ export const uploadResumeState: StateHandler = {
 
     context.data.resumeUploaded = true;
     context.data.resumeSelectorUsed = resolvedSelector;
+
+    // ── Cover letter: upload resume as fallback if field is required ──
+    // Some Greenhouse boards mark cover letter as required (aria-required
+    // on the file-upload group).  Use the resume file as a stand-in to
+    // avoid a validation rejection on submit.
+    await uploadCoverLetterIfRequired(context, resumePath);
+
     return { outcome: "success" };
   },
 };
+
+// ---------------------------------------------------------------------------
+// Cover letter upload helper
+// ---------------------------------------------------------------------------
+
+const COVER_LETTER_SELECTORS: readonly string[] = [
+  'input[type="file"]#cover_letter',
+  'input[type="file"][id*="cover_letter"]',
+  'input[type="file"][name*="cover_letter"]',
+];
+
+async function uploadCoverLetterIfRequired(
+  context: StateContext,
+  resumePath: string,
+): Promise<void> {
+  if (!context.execute) return;
+
+  const requiredCheck = await context.execute({
+    type: "WAIT_FOR",
+    target: '[aria-labelledby="upload-label-cover_letter"][aria-required="true"]',
+    timeoutMs: 500,
+  });
+  if (!requiredCheck.success) return;
+
+  let clSelector: string | undefined;
+  for (const sel of COVER_LETTER_SELECTORS) {
+    const check = await context.execute({
+      type: "WAIT_FOR", target: sel, timeoutMs: 300,
+    });
+    if (check.success) { clSelector = sel; break; }
+  }
+  if (!clSelector) return;
+
+  const triggerSelector =
+    '[aria-labelledby="upload-label-cover_letter"] button:has-text("Attach")';
+  const triggerCheck = await context.execute({
+    type: "WAIT_FOR", target: triggerSelector, timeoutMs: 1000,
+  });
+
+  const uploadResult = await context.execute({
+    type: "UPLOAD",
+    selector: clSelector,
+    filePath: resumePath,
+    ...(triggerCheck.success ? { triggerSelector } : {}),
+  });
+
+  if (uploadResult.success) {
+    context.data.coverLetterUploaded = true;
+  }
+}

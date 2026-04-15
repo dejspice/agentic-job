@@ -38,9 +38,12 @@ export async function executeExtractFields(
         .map((el: any) => {
           let id = "";
           if (el.id) {
-            // Numeric-only IDs are invalid CSS selectors (#1255 throws
-            // SyntaxError). Use attribute selector for those.
-            id = /^\d/.test(el.id) ? `[id="${el.id}"]` : `#${el.id}`;
+            // Use attribute selector for IDs that are invalid as CSS
+            // hash selectors: numeric-only, or containing brackets/special
+            // characters (e.g. Greenhouse checkbox IDs "question_XXX[]_YYY").
+            id = /^\d|[\[\](){}#.+~>:,]/.test(el.id)
+              ? `[id="${el.id}"]`
+              : `#${el.id}`;
           }
           const name = el.name ? `[name="${el.name}"]` : "";
           const selector = id || name || el.tagName.toLowerCase();
@@ -53,22 +56,54 @@ export async function executeExtractFields(
           if (!label && el.closest("label")) {
             label = (el.closest("label").textContent ?? "").trim() || null;
           }
+          // Strip trailing required-marker asterisk(s) — Greenhouse renders
+          // <span aria-hidden="true">*</span> inside labels but textContent
+          // includes it, breaking deterministic pattern matching.
+          if (label) label = label.replace(/\s*\*+\s*$/, "").trim() || null;
 
           const role = el.getAttribute("role") || null;
 
           // React Select combobox inputs always have empty .value even when
           // an option is selected (React manages the state, not the DOM).
-          // Try to read the selected value from the .select__single-value
-          // sibling; fall back to the raw el.value.
+          // The selected text lives in a sibling element of the input's
+          // container.  Walk up to the value-container / control wrapper
+          // and query for the single-value display element.
+          //
+          // Greenhouse DOM structure (new Remix-based boards):
+          //   .select__value-container
+          //     .select__single-value   ← selected text here
+          //     .select__input-container
+          //       input[role=combobox]   ← el is here, value="" always
           let fieldValue = el.value || null;
+
+          // Checkboxes and radios: value attr is always set (the option
+          // value) but the field is only "filled" when checked.
+          if ((el.type === "checkbox" || el.type === "radio") && !el.checked) {
+            fieldValue = null;
+          }
+
           if (role === "combobox" && !fieldValue) {
-            const container = el.closest(".select__input-container")
-              ?? el.closest("[class*='select']");
-            const singleValue = container
-              ?.parentElement?.querySelector(".select__single-value")
-              ?? container?.closest("[class*='container']")?.querySelector(".select__single-value");
-            if (singleValue) {
-              fieldValue = (singleValue.textContent ?? "").trim() || null;
+            const inputContainer = el.closest(".select__input-container");
+            const valueContainer = inputContainer
+              ? inputContainer.parentElement
+              : el.closest("[class*='value-container']")
+                ?? el.closest("[class*='ValueContainer']")
+                ?? el.parentElement?.parentElement;
+            const searchRoots = [
+              valueContainer,
+              valueContainer?.parentElement,
+              el.parentElement,
+            ];
+            for (const root of searchRoots) {
+              if (!root) continue;
+              const sv =
+                root.querySelector(".select__single-value")
+                ?? root.querySelector("[class*='singleValue']")
+                ?? root.querySelector("[class*='single-value']");
+              if (sv) {
+                const text = (sv.textContent ?? "").trim();
+                if (text) { fieldValue = text; break; }
+              }
             }
           }
 

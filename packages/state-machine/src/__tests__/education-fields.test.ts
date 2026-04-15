@@ -150,3 +150,48 @@ describe("education fields — month as react-select", () => {
     assert.ok(monthType, "Month should use sequential TYPE for react-select");
   });
 });
+
+describe("education fields — last-resort returns false when no option is clickable", () => {
+  it("returns false from fillEducationAutocomplete when menu never appears", async () => {
+    const commands: WorkerCommand[] = [];
+    const ctx: StateContext = {
+      runId: "test-run",
+      jobId: "test-job",
+      candidateId: "test-cand",
+      jobUrl: "https://example.com",
+      currentState: StateName.FILL_REQUIRED_FIELDS,
+      stateHistory: [],
+      data: {
+        candidate: {
+          firstName: "Test",
+          lastName: "User",
+          email: "test@example.com",
+          school: "Nonexistent University",
+        },
+      },
+      execute: async (cmd: WorkerCommand): Promise<CommandResult> => {
+        commands.push(cmd);
+
+        if (cmd.type === "WAIT_FOR") {
+          const target = typeof cmd.target === "string" ? cmd.target : "";
+          if (target === "#school--0" || target === "#first_name" || target === "#last_name" || target === "#email") {
+            return { success: true, durationMs: 0 };
+          }
+          // All menu/option waits fail — simulating no autocomplete results
+          return { success: false, durationMs: 0 };
+        }
+        if (cmd.type === "TYPE") return { success: true, durationMs: 0 };
+        if (cmd.type === "CLICK") return { success: false, durationMs: 0 };
+        if (cmd.type === "EXTRACT_OPTIONS") return { success: true, durationMs: 0, data: { options: [], count: 0 } };
+        return { success: true, durationMs: 0 };
+      },
+    };
+
+    const result = await fillRequiredFieldsState.execute(ctx);
+    const filledFields = (result.data?.filledFields as string[] | undefined) ?? [];
+    assert.ok(
+      !filledFields.includes("#school--0"),
+      "School should NOT be in filledFields when no option could be clicked",
+    );
+  });
+});
