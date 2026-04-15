@@ -44,9 +44,6 @@ COPY --from=builder /app/packages/api/dist ./packages/api/dist/
 RUN npx prisma generate
 
 ENV NODE_ENV=production
-ENV PORT=4000
 
-EXPOSE 4000
-
-# Migrate DB on startup (idempotent), then start server
-CMD ["sh", "-c", "npx prisma migrate deploy && node packages/api/dist/start.js"]
+# Migrate DB on startup (best-effort), then start server
+CMD ["sh", "-c", "npx prisma migrate deploy || echo 'Migration failed — starting anyway'; node packages/api/dist/start.js"]
