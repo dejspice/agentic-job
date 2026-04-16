@@ -12,7 +12,6 @@ COPY package.json package-lock.json tsconfig.json tsconfig.base.json ./
 COPY packages/core/package.json packages/core/tsconfig.json ./packages/core/
 COPY packages/intelligence/package.json packages/intelligence/tsconfig.json ./packages/intelligence/
 COPY packages/browser-worker/package.json packages/browser-worker/tsconfig.json ./packages/browser-worker/
-COPY packages/browser-broker/package.json packages/browser-broker/tsconfig.json ./packages/browser-broker/
 COPY packages/state-machine/package.json packages/state-machine/tsconfig.json ./packages/state-machine/
 COPY packages/workflows/package.json packages/workflows/tsconfig.json ./packages/workflows/
 COPY packages/worker/package.json packages/worker/tsconfig.json ./packages/worker/
@@ -24,7 +23,6 @@ RUN npm ci
 COPY packages/core/src ./packages/core/src
 COPY packages/intelligence/src ./packages/intelligence/src
 COPY packages/browser-worker/src ./packages/browser-worker/src
-COPY packages/browser-broker/src ./packages/browser-broker/src
 COPY packages/state-machine/src ./packages/state-machine/src
 COPY packages/workflows/src ./packages/workflows/src
 COPY packages/worker/src ./packages/worker/src
@@ -52,7 +50,6 @@ COPY --from=builder /app/package.json /app/package-lock.json ./
 COPY --from=builder /app/packages/core/package.json ./packages/core/
 COPY --from=builder /app/packages/intelligence/package.json ./packages/intelligence/
 COPY --from=builder /app/packages/browser-worker/package.json ./packages/browser-worker/
-COPY --from=builder /app/packages/browser-broker/package.json ./packages/browser-broker/
 COPY --from=builder /app/packages/state-machine/package.json ./packages/state-machine/
 COPY --from=builder /app/packages/workflows/package.json ./packages/workflows/
 COPY --from=builder /app/packages/worker/package.json ./packages/worker/
@@ -60,7 +57,6 @@ COPY --from=builder /app/node_modules ./node_modules/
 COPY --from=builder /app/packages/core/dist ./packages/core/dist/
 COPY --from=builder /app/packages/intelligence/dist ./packages/intelligence/dist/
 COPY --from=builder /app/packages/browser-worker/dist ./packages/browser-worker/dist/
-COPY --from=builder /app/packages/browser-broker/dist ./packages/browser-broker/dist/
 COPY --from=builder /app/packages/state-machine/dist ./packages/state-machine/dist/
 COPY --from=builder /app/packages/workflows/dist ./packages/workflows/dist/
 COPY --from=builder /app/packages/worker/dist ./packages/worker/dist/
