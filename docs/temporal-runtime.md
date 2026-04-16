@@ -57,7 +57,7 @@ Click **+ New** → **Empty Service** → **Settings**:
 **Environment variables:**
 
 ```
-DB=postgresql
+DB=postgres12
 DB_PORT=5432
 POSTGRES_USER=<from Railway Postgres>
 POSTGRES_PWD=<from Railway Postgres>
@@ -66,11 +66,16 @@ POSTGRES_SEEDS=<Railway Postgres private hostname>
 
 Use Railway's variable references to pull these from the Postgres plugin:
 ```
+DB=postgres12
 POSTGRES_USER=${{Postgres.PGUSER}}
 POSTGRES_PWD=${{Postgres.PGPASSWORD}}
 POSTGRES_SEEDS=${{Postgres.PGHOST}}
 DB_PORT=${{Postgres.PGPORT}}
 ```
+
+> **Note:** The documented `DB` value for PostgreSQL is `postgres12` (not `postgresql`).
+> The `auto-setup` image is deprecated upstream in favor of `temporalio/server` +
+> `temporalio/admin-tools`, but still works and is the fastest path for initial setup.
 
 **Private networking hostname:** Once deployed, note the internal hostname,
 e.g. `temporal.railway.internal`. This is the `TEMPORAL_ADDRESS` for API and Worker.
@@ -140,7 +145,7 @@ NODE_ENV=production
 
 | Variable | Value |
 |---|---|
-| `DB` | `postgresql` |
+| `DB` | `postgres12` |
 | `DB_PORT` | `${{Postgres.PGPORT}}` |
 | `POSTGRES_USER` | `${{Postgres.PGUSER}}` |
 | `POSTGRES_PWD` | `${{Postgres.PGPASSWORD}}` |
