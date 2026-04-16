@@ -7,7 +7,15 @@
 
 import { startServer } from "./server.js";
 
-startServer()
+const temporalAddress = process.env.TEMPORAL_ADDRESS;
+
+startServer({
+  // Enable Temporal client when TEMPORAL_ADDRESS is configured.
+  // startServer() will call TemporalClientWrapper.connect() which reads
+  // TEMPORAL_ADDRESS and TEMPORAL_NAMESPACE from env, but the `temporal`
+  // key must be present in the config for the connect path to trigger.
+  ...(temporalAddress ? { temporal: { address: temporalAddress } } : {}),
+})
   .then(({ server }) => {
     const addr = server.address();
     const port = typeof addr === "object" && addr ? addr.port : addr;

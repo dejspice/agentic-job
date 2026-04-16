@@ -39,7 +39,10 @@ npx prisma migrate dev --name init 2>/dev/null || npx prisma db push
 
 echo ""
 echo "==> Dev environment is up."
-echo "    PostgreSQL: localhost:5432"
-echo "    Redis:      localhost:6379"
-echo "    Temporal:   localhost:7233"
+echo "    PostgreSQL:  localhost:5432"
+echo "    Redis:       localhost:6379"
+echo "    Temporal:    localhost:7233"
 echo "    Temporal UI: http://localhost:8080"
+echo ""
+echo "    To start the API:     TEMPORAL_ADDRESS=localhost:7233 node packages/api/dist/start.js"
+echo "    To start the worker:  TEMPORAL_ADDRESS=localhost:7233 node packages/worker/dist/start.js"

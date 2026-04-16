@@ -41,6 +41,8 @@ export {
   captureActivity,
   runGreenhouseHappyPathActivity,
   executeGreenhouseHappyPath,
+  enterVerificationCodeActivity,
+  enterVerificationCode,
 } from "./activities/index.js";
 export type {
   InitActivityInput,
@@ -53,4 +55,6 @@ export type {
   CaptureActivityResult,
   GreenhouseHappyPathInput,
   GreenhouseHappyPathResult,
+  EnterVerificationCodeInput,
+  VerificationEntryResult,
 } from "./activities/index.js";
