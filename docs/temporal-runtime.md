@@ -1,199 +1,225 @@
-# Temporal Runtime — Operational Runbook
-
-This document covers the exact steps to bring up the Autopilot Temporal runtime so CandidateOS → Autopilot runs execute end-to-end.
+# Temporal Runtime — Railway Deployment Runbook
 
 ---
 
-## Architecture
+## 1. Recommended Railway Architecture
 
-Three processes must be running simultaneously:
+Four Railway services in one project:
 
-| Process | Role | Task queue |
-|---|---|---|
-| **Temporal Server** | Orchestrator — persists workflow state, dispatches tasks | — |
-| **API Server** (`packages/api`) | HTTP API — accepts `POST /api/runs`, creates Temporal workflows | — (client only) |
-| **Worker** (`packages/worker`) | Polls `apply-workflow` task queue, executes `applyWorkflow` + activities | `apply-workflow` |
+| # | Service name | Type | Image / Dockerfile | Exposes port |
+|---|---|---|---|---|
+| 1 | **Postgres** | Railway managed plugin | `PostgreSQL` plugin | 5432 (private) |
+| 2 | **Temporal** | Docker service | `temporalio/auto-setup:latest` | 7233 (private) |
+| 3 | **API** | Docker service | `Dockerfile` (repo root) | $PORT (public) |
+| 4 | **Worker** | Docker service | `Dockerfile.worker` (repo root) | $PORT (private, health only) |
 
-The API is a Temporal **client** (starts/signals/queries workflows).
-The Worker is a Temporal **worker** (executes workflow and activity code).
-Both connect to the same Temporal Server.
-
----
-
-## Root causes of `temporalConnected: false`
-
-1. **`start.ts` did not pass `temporal` config** — Fixed in this PR. The production entry point now reads `TEMPORAL_ADDRESS` from env and passes `{ temporal: { address } }` to `startServer()`, which triggers `TemporalClientWrapper.connect()`.
-
-2. **Temporal Server unreachable** — `TEMPORAL_ADDRESS` must point to a running Temporal gRPC endpoint (port 7233). If the server is down or the address is wrong, the API starts without a Temporal client (logs a warning).
-
-3. **No Worker process** — Even with `temporalConnected: true`, workflows will be accepted but never execute unless a Worker is polling the `apply-workflow` task queue. This was the "runs accepted but never actually execute" symptom.
+- API and Worker are **two separate Railway services** from the same repo.
+- Both connect to Temporal over **Railway private networking** (plain gRPC, no TLS).
+- Temporal self-hosted on Railway is the fastest path — avoids Temporal Cloud mTLS setup.
+- Redis is **not required** for the minimum viable topology.
 
 ---
 
-## Required environment variables
+## 2. Temporal Hosting Recommendation
 
-### API Server
+**Self-hosted Temporal on Railway** using `temporalio/auto-setup:latest`.
 
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `TEMPORAL_ADDRESS` | **Yes** (for live runs) | `localhost:7233` | Temporal gRPC endpoint |
-| `TEMPORAL_NAMESPACE` | No | `default` | Temporal namespace |
-| `DATABASE_URL` | Yes | — | PostgreSQL connection string |
-| `PORT` | No | `4000` | HTTP listen port |
-| `AUTOPILOT_API_KEY` | Recommended | — | Shared secret for CandidateOS calls |
-| `AUTOPILOT_CORS_ORIGIN` | Recommended | `*` | Allowed CORS origins |
+Why:
+- Zero signup, zero mTLS certificate management.
+- Railway private networking gives sub-ms latency between API/Worker ↔ Temporal.
+- The `auto-setup` image auto-creates the `default` namespace and runs schema migrations.
+- Temporal Cloud requires mTLS certs (adds setup complexity with no benefit for initial launch).
+- You can migrate to Temporal Cloud later if operational overhead becomes a concern.
+
+---
+
+## 3. Required Railway Services — Exact Setup
+
+### Service 1: Postgres (Railway Plugin)
+
+In your Railway project, click **+ New** → **Database** → **PostgreSQL**.
+
+Railway auto-provisions it and exposes `DATABASE_URL` as a shared variable.
+
+No further config needed. The API reads `DATABASE_URL` for Prisma.
+
+### Service 2: Temporal
+
+Click **+ New** → **Empty Service** → **Settings**:
+
+| Setting | Value |
+|---|---|
+| Source | Docker Image |
+| Image | `temporalio/auto-setup:latest` |
+| Port | `7233` |
+| Networking | Private only (no public domain) |
+
+**Environment variables:**
+
+```
+DB=postgresql
+DB_PORT=5432
+POSTGRES_USER=<from Railway Postgres>
+POSTGRES_PWD=<from Railway Postgres>
+POSTGRES_SEEDS=<Railway Postgres private hostname>
+```
+
+Use Railway's variable references to pull these from the Postgres plugin:
+```
+POSTGRES_USER=${{Postgres.PGUSER}}
+POSTGRES_PWD=${{Postgres.PGPASSWORD}}
+POSTGRES_SEEDS=${{Postgres.PGHOST}}
+DB_PORT=${{Postgres.PGPORT}}
+```
+
+**Private networking hostname:** Once deployed, note the internal hostname,
+e.g. `temporal.railway.internal`. This is the `TEMPORAL_ADDRESS` for API and Worker.
+
+### Service 3: API
+
+Click **+ New** → **GitHub Repo** → select this repo.
+
+| Setting | Value |
+|---|---|
+| Builder | Dockerfile |
+| Dockerfile path | `Dockerfile` |
+| Watch paths | `packages/api/**`, `packages/core/**`, `prisma/**`, `Dockerfile` |
+| Health check path | `/health` |
+| Health check timeout | 30s |
+| Restart policy | On failure (3 retries) |
+| Networking | **Public domain** (generate one or set custom) |
+
+**Environment variables:**
+
+```
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+TEMPORAL_ADDRESS=temporal.railway.internal:7233
+TEMPORAL_NAMESPACE=default
+AUTOPILOT_API_KEY=<your shared secret>
+AUTOPILOT_CORS_ORIGIN=https://app.candidateos.com
+PORT=4000
+NODE_ENV=production
+```
+
+> Replace `temporal.railway.internal` with the actual private hostname
+> Railway assigns to your Temporal service.
+
+### Service 4: Worker
+
+Click **+ New** → **GitHub Repo** → select this repo (same repo as API).
+
+| Setting | Value |
+|---|---|
+| Builder | Dockerfile |
+| Dockerfile path | `Dockerfile.worker` |
+| Watch paths | `packages/worker/**`, `packages/workflows/**`, `packages/core/**`, `Dockerfile.worker` |
+| Health check path | `/health` |
+| Health check timeout | 120s |
+| Restart policy | On failure (5 retries) |
+| Networking | Private only (no public domain needed) |
+
+**Environment variables:**
+
+```
+TEMPORAL_ADDRESS=temporal.railway.internal:7233
+TEMPORAL_NAMESPACE=default
+ANTHROPIC_API_KEY=<your Claude API key>
+BRIGHT_DATA_AUTH=<your Bright Data credentials>
+NODE_ENV=production
+```
+
+> The worker does NOT need `DATABASE_URL` — activities don't write to Postgres directly.
+> The worker DOES need `ANTHROPIC_API_KEY` (for LLM-powered screening) and
+> `BRIGHT_DATA_AUTH` (for proxy-backed browser sessions).
+
+---
+
+## 4. Exact Env Vars Per Service
+
+### Temporal
+
+| Variable | Value |
+|---|---|
+| `DB` | `postgresql` |
+| `DB_PORT` | `${{Postgres.PGPORT}}` |
+| `POSTGRES_USER` | `${{Postgres.PGUSER}}` |
+| `POSTGRES_PWD` | `${{Postgres.PGPASSWORD}}` |
+| `POSTGRES_SEEDS` | `${{Postgres.PGHOST}}` |
+
+### API
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| `TEMPORAL_ADDRESS` | `temporal.railway.internal:7233` |
+| `TEMPORAL_NAMESPACE` | `default` |
+| `AUTOPILOT_API_KEY` | `<your-shared-secret>` |
+| `AUTOPILOT_CORS_ORIGIN` | `https://app.candidateos.com` |
+| `PORT` | `4000` |
+| `NODE_ENV` | `production` |
 
 ### Worker
 
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
-| `TEMPORAL_ADDRESS` | **Yes** | `localhost:7233` | Temporal gRPC endpoint |
-| `TEMPORAL_NAMESPACE` | No | `default` | Temporal namespace |
-| `ANTHROPIC_API_KEY` | Yes (for LLM activities) | — | Claude API key |
-| `BRIGHT_DATA_AUTH` | Yes (for browser activities) | — | Bright Data proxy credentials |
-| `DATABASE_URL` | Depends on activities | — | If activities read/write DB |
-
-### Temporal Server (docker-compose)
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `DB` | `postgresql` | Storage backend |
-| `POSTGRES_USER` | `dejsol` | DB user |
-| `POSTGRES_PWD` | `dejsol` | DB password |
-| `POSTGRES_SEEDS` | `postgres` | DB host |
+| Variable | Value |
+|---|---|
+| `TEMPORAL_ADDRESS` | `temporal.railway.internal:7233` |
+| `TEMPORAL_NAMESPACE` | `default` |
+| `ANTHROPIC_API_KEY` | `<your-claude-key>` |
+| `BRIGHT_DATA_AUTH` | `<your-brightdata-auth>` |
+| `NODE_ENV` | `production` |
 
 ---
 
-## Local startup (development)
+## 5. Deploy Order — Exact Runbook
 
-### Step 1: Start infrastructure
+### Step 1: Postgres
 
-```bash
-# From repo root
-docker compose up -d
-# Starts: postgres, redis, temporal, temporal-ui
-```
+1. Add PostgreSQL plugin to your Railway project.
+2. Note: Railway auto-provisions and exposes connection variables.
 
-Or use the full dev script:
+### Step 2: Temporal
 
-```bash
-npm run dev
-# Waits for all services, runs migrations
-```
+1. Create the Temporal service (Docker image: `temporalio/auto-setup:latest`).
+2. Set env vars referencing Postgres (see above).
+3. Deploy. Wait for it to become healthy (may take 60–90s on first boot for schema setup).
+4. Note the private hostname (visible in service settings → Networking).
 
-### Step 2: Build all packages
+### Step 3: API
 
-```bash
-npm run build
-```
+1. Create the API service from the GitHub repo.
+2. Set Dockerfile path to `Dockerfile`.
+3. Set all API env vars (replacing `temporal.railway.internal` with actual hostname).
+4. Deploy. Wait for health check to pass at `/health`.
+5. Open the public URL and verify:
+   ```
+   curl https://<api-public-url>/health
+   ```
+   Expected: `{"status":"ok","temporalConnected":true,...}`
 
-### Step 3: Start the API server
+### Step 4: Worker
 
-```bash
-export TEMPORAL_ADDRESS=localhost:7233
-export DATABASE_URL=postgresql://dejsol:dejsol@localhost:5432/dejsol?schema=public
-node packages/api/dist/start.js
-```
+1. Create the Worker service from the same GitHub repo.
+2. Set Dockerfile path to `Dockerfile.worker`.
+3. Set all Worker env vars.
+4. Deploy. Wait for health check to pass at `/health`.
+5. Verify via worker health endpoint (use Railway's internal URL or deploy logs):
+   ```
+   {"status":"ok","service":"dejsol-worker","taskQueue":"apply-workflow","polling":true,...}
+   ```
 
-### Step 4: Start the Worker
-
-In a separate terminal:
-
-```bash
-export TEMPORAL_ADDRESS=localhost:7233
-export ANTHROPIC_API_KEY=sk-ant-...
-export BRIGHT_DATA_AUTH=...
-node packages/worker/dist/start.js
-```
-
----
-
-## Deploy startup (Railway / Docker)
-
-### API (existing Dockerfile)
-
-Set these env vars in Railway:
-- `TEMPORAL_ADDRESS` — your Temporal Cloud or self-hosted address
-- `TEMPORAL_NAMESPACE` — your namespace
-- `DATABASE_URL` — your PostgreSQL connection string
-- `AUTOPILOT_API_KEY` — shared secret
-- `AUTOPILOT_CORS_ORIGIN` — CandidateOS domain(s)
-
-### Worker (Dockerfile.worker)
-
-Deploy as a separate Railway service using `Dockerfile.worker`:
-
-```json
-{
-  "build": {
-    "builder": "DOCKERFILE",
-    "dockerfilePath": "Dockerfile.worker"
-  },
-  "deploy": {
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 5
-  }
-}
-```
-
-Set env vars:
-- `TEMPORAL_ADDRESS` — same as API
-- `TEMPORAL_NAMESPACE` — same as API
-- `ANTHROPIC_API_KEY`
-- `BRIGHT_DATA_AUTH`
-
-### Temporal Server
-
-Options:
-1. **Temporal Cloud** (recommended for production) — no self-hosting needed
-2. **Self-hosted** via `temporalio/auto-setup` Docker image (see docker-compose.yml)
-
----
-
-## Health-check commands
-
-### 1. API health (confirms Temporal client is connected)
+### Step 5: Validate End-to-End
 
 ```bash
-curl -s https://<autopilot-host>/health | jq .
-```
+# 1. API health — temporalConnected must be true
+curl -s https://<api-public-url>/health | jq .temporalConnected
+# Expected: true
 
-Expected:
-```json
-{
-  "status": "ok",
-  "service": "dejsol-api",
-  "temporalConnected": true,
-  "timestamp": "2026-04-16T..."
-}
-```
+# 2. Worker health — polling must be true
+# (Check deploy logs or Railway's health check dashboard)
+# Expected: [worker] Polling task queue "apply-workflow"...
 
-`temporalConnected: true` means the API successfully opened a gRPC connection to Temporal.
-
-### 2. Temporal Server health
-
-```bash
-# If using docker-compose locally:
-docker compose exec temporal tctl cluster health
-# Expected output: SERVING
-
-# If using Temporal Cloud or remote:
-tctl --address <temporal-address> cluster health
-```
-
-### 3. Worker is polling (check Temporal UI)
-
-Open Temporal UI (`http://localhost:8080` locally, or your Temporal Cloud UI).
-
-Navigate to: **Namespaces → default → Task Queues → apply-workflow**
-
-You should see at least one worker (poller) listed. If the task queue shows 0 pollers, the worker is not running or not connected.
-
-### 4. End-to-end run test
-
-```bash
-# Create a run via the API
-curl -s -X POST https://<autopilot-host>/api/runs \
+# 3. Fire a test run from CandidateOS or curl
+curl -s -X POST https://<api-public-url>/api/runs \
   -H "Content-Type: application/json" \
   -H "x-api-key: <your-key>" \
   -d '{
@@ -202,30 +228,35 @@ curl -s -X POST https://<autopilot-host>/api/runs \
     "mode": "FULL_AUTO",
     "jobUrl": "https://job-boards.greenhouse.io/company/jobs/12345",
     "atsType": "GREENHOUSE"
-  }' | jq .
-```
+  }'
+# Expected: 201, message: "Run started and workflow triggered"
 
-Note the `id` from the response, then poll status:
-
-```bash
-curl -s https://<autopilot-host>/api/runs/<run-id>/status \
+# 4. Poll run status
+curl -s https://<api-public-url>/api/runs/<run-id>/status \
   -H "x-api-key: <your-key>" | jq .
+# Expected: phase progresses from "initializing" → "running" → "completed"
 ```
-
-You should see `phase` progress from `"initializing"` → `"running"` → `"completed"` and `percentComplete` increase.
 
 ---
 
-## Confirmation criteria: "ready for one live run"
+## 6. Confirmation Criteria: "CandidateOS Can Now Run One Real Live Application"
 
-All five must be true:
+All five must be true simultaneously:
 
-| # | Check | How to verify |
-|---|---|---|
-| 1 | Temporal Server is `SERVING` | `tctl cluster health` returns `SERVING` |
-| 2 | API reports `temporalConnected: true` | `GET /health` → `temporalConnected: true` |
-| 3 | Worker is polling `apply-workflow` | Temporal UI shows ≥1 poller on `apply-workflow` task queue |
-| 4 | `POST /api/runs` returns `"Run started and workflow triggered"` | Response `message` field |
-| 5 | Workflow appears in Temporal UI | Namespaces → default → Workflows → `apply-<runId>` is visible and `Running` |
+| # | Check | How to verify | Expected |
+|---|---|---|---|
+| 1 | Temporal server running | Railway Temporal service is "Active" | Green status |
+| 2 | API reports Temporal connected | `GET /health` | `temporalConnected: true` |
+| 3 | Worker is polling | Worker deploy logs or health endpoint | `polling: true` |
+| 4 | Run creates + triggers workflow | `POST /api/runs` | `message: "Run started and workflow triggered"` |
+| 5 | Workflow progresses | `GET /api/runs/:id/status` | `phase` changes from `initializing` |
 
-If all five pass, CandidateOS → Autopilot end-to-end execution is operational.
+If all five pass, CandidateOS can trigger real live Autopilot runs end-to-end.
+
+---
+
+## 7. What Does NOT Need to Be on Railway
+
+- **Redis** — Not used by API or Worker in the current execution path.
+- **Temporal UI** — Nice to have for debugging, not required for execution. Add later as an optional 5th service (`temporalio/ui:latest` with `TEMPORAL_ADDRESS` pointing to the Temporal private hostname).
+- **Console** — The Vite React app (`packages/console`) is an operator dashboard. Deploy separately if desired (Vercel recommended for static hosting).
