@@ -54,8 +54,8 @@ function startHealthServer(port: number): void {
       timestamp: new Date().toISOString(),
     }));
   });
-  server.listen(port, () => {
-    console.log(`[worker] Health server listening on port ${port}`);
+  server.listen(port, "::", () => {
+    console.log(`[worker] Health server listening on [::]:${port}`);
   });
 }
 

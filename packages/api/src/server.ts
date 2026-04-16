@@ -135,8 +135,8 @@ export async function startServer(config: ServerConfig = {}) {
 
   const app = createApp({ ...config, temporalClient, prismaClient });
 
-  const server = app.listen(port, () => {
-    console.log(`[api] Dejsol API server listening on port ${port}`);
+  const server = app.listen(port, "::", () => {
+    console.log(`[api] Dejsol API server listening on [::]:${port}`);
   });
 
   return {
