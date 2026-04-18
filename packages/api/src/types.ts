@@ -99,6 +99,14 @@ export interface RunStatusResponse {
   phase: string;
   statesCompleted: StateName[];
   percentComplete: number;
+  /**
+   * True iff any screeningAnswers entry on this run has an adjudication
+   * recommendation of "human_review_required" or "reject" — i.e. an operator
+   * must approve or reject the answer before it is banked.
+   */
+  answerReviewRequired?: boolean;
+  /** Count of screeningAnswers entries flagged as needing review or rejected. */
+  answerReviewCount?: number;
 }
 
 // --- Candidates ---

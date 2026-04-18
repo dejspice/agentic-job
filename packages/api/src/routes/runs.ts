@@ -20,16 +20,67 @@ import type { KpiResponse } from "../types.js";
 export const runsRouter = Router();
 
 /**
+ * Recommendations on a ScreeningAnswerEntry.adjudication block that flag the
+ * entry as needing operator attention before its value can be trusted or
+ * banked.  Mirrors the values in @dejsol/intelligence's PolicyDecision.
+ */
+const REVIEW_RECOMMENDATIONS: ReadonlySet<string> = new Set([
+  "human_review_required",
+  "reject",
+]);
+
+/**
+ * Derive answer-review metrics from an answersJson blob.
+ *
+ * Accepts the loose shape persisted by runGreenhouseHappyPathActivity:
+ *   {
+ *     screeningAnswers: Array<{ adjudication?: { recommendation?: string } }>,
+ *     answerReviewRequired?: boolean,
+ *     answerReviewCount?: number,
+ *   }
+ *
+ * Prefers the persisted derived values when present; otherwise recomputes
+ * from the screeningAnswers array.  Returns zeros for any non-object input.
+ */
+function deriveAnswerReviewMetrics(
+  answersJson: unknown,
+): { answerReviewRequired: boolean; answerReviewCount: number } {
+  if (!answersJson || typeof answersJson !== "object") {
+    return { answerReviewRequired: false, answerReviewCount: 0 };
+  }
+  const bag = answersJson as Record<string, unknown>;
+  const persistedCount = typeof bag["answerReviewCount"] === "number" ? bag["answerReviewCount"] as number : undefined;
+  const persistedFlag = typeof bag["answerReviewRequired"] === "boolean" ? bag["answerReviewRequired"] as boolean : undefined;
+  if (persistedCount !== undefined && persistedFlag !== undefined) {
+    return { answerReviewRequired: persistedFlag, answerReviewCount: persistedCount };
+  }
+  const list = bag["screeningAnswers"];
+  if (!Array.isArray(list)) {
+    return { answerReviewRequired: false, answerReviewCount: 0 };
+  }
+  let answerReviewCount = 0;
+  for (const entry of list) {
+    const rec = (entry as { adjudication?: { recommendation?: string } } | null | undefined)
+      ?.adjudication?.recommendation;
+    if (typeof rec === "string" && REVIEW_RECOMMENDATIONS.has(rec)) answerReviewCount += 1;
+  }
+  return { answerReviewRequired: answerReviewCount > 0, answerReviewCount };
+}
+
+/**
  * Enrich a raw run record with computed fields for external consumers.
  * Does not mutate the input — returns a new object.
  */
-function withComputedFields<T extends { outcome?: string | null }>(
+function withComputedFields<T extends { outcome?: string | null; answersJson?: unknown }>(
   run: T,
-): T & { actionRequired: boolean } {
+): T & { actionRequired: boolean; answerReviewRequired: boolean; answerReviewCount: number } {
   const outcome = run.outcome ?? null;
+  const { answerReviewRequired, answerReviewCount } = deriveAnswerReviewMetrics(run.answersJson);
   const actionRequired =
-    outcome === "VERIFICATION_REQUIRED" || outcome === "ESCALATED";
-  return { ...run, actionRequired };
+    outcome === "VERIFICATION_REQUIRED" ||
+    outcome === "ESCALATED" ||
+    answerReviewRequired;
+  return { ...run, actionRequired, answerReviewRequired, answerReviewCount };
 }
 
 /**
@@ -303,6 +354,22 @@ runsRouter.get("/:id/status", async (req, res, next) => {
   try {
     const { id } = req.params;
     const temporalClient = req.app.locals.temporalClient as TemporalClientWrapper | undefined;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    // Derive answer-review metrics from apply_runs.answers_json when available
+    // so consumers polling /status can see the flag without a second request.
+    let reviewMetrics = { answerReviewRequired: false, answerReviewCount: 0 };
+    if (prismaClient) {
+      try {
+        const row = await prismaClient.applyRun.findUnique({
+          where: { id },
+          select: { answersJson: true },
+        });
+        reviewMetrics = deriveAnswerReviewMetrics(row?.answersJson ?? null);
+      } catch {
+        // Non-fatal — /status degrades to metrics-less response.
+      }
+    }
 
     if (temporalClient) {
       try {
@@ -327,6 +394,8 @@ runsRouter.get("/:id/status", async (req, res, next) => {
           phase: status.phase ?? "initializing",
           statesCompleted: (status.statesCompleted ?? []) as import("@dejsol/core").StateName[],
           percentComplete: progress.percentComplete ?? 0,
+          answerReviewRequired: reviewMetrics.answerReviewRequired,
+          answerReviewCount: reviewMetrics.answerReviewCount,
         };
 
         return res.json({ success: true, data: liveStatus } satisfies ApiResponse<RunStatusResponse>);
@@ -342,6 +411,8 @@ runsRouter.get("/:id/status", async (req, res, next) => {
       phase: "initializing",
       statesCompleted: [],
       percentComplete: 0,
+      answerReviewRequired: reviewMetrics.answerReviewRequired,
+      answerReviewCount: reviewMetrics.answerReviewCount,
     };
 
     const response: ApiResponse<RunStatusResponse> = {
@@ -373,18 +444,36 @@ runsRouter.get("/:id/screening-answers", async (req, res, next) => {
         select: { answersJson: true, candidateId: true, outcome: true },
       });
       if (!run) throw ApiError.notFound("Run", id);
-      const response: ApiResponse<{ answersJson: unknown; candidateId: string; outcome: string | null }> = {
+      const metrics = deriveAnswerReviewMetrics(run.answersJson ?? null);
+      const response: ApiResponse<{
+        answersJson: unknown;
+        candidateId: string;
+        outcome: string | null;
+        answerReviewRequired: boolean;
+        answerReviewCount: number;
+      }> = {
         success: true,
         data: {
           answersJson: run.answersJson ?? {},
           candidateId: run.candidateId,
           outcome: run.outcome,
+          answerReviewRequired: metrics.answerReviewRequired,
+          answerReviewCount: metrics.answerReviewCount,
         },
       };
       return res.json(response);
     }
 
-    res.json({ success: true, data: { answersJson: {}, candidateId: "", outcome: null } });
+    res.json({
+      success: true,
+      data: {
+        answersJson: {},
+        candidateId: "",
+        outcome: null,
+        answerReviewRequired: false,
+        answerReviewCount: 0,
+      },
+    });
   } catch (err) {
     next(err);
   }
