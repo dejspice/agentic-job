@@ -195,24 +195,90 @@ runsRouter.post("/", async (req, res, next) => {
       }
     }
 
+    // ── Resolve jobUrl + atsType for the workflow start ─────────────────
+    // The Temporal workflow needs jobUrl + atsType to navigate and detect
+    // fields. Prefer values supplied in the request body (backward-compat
+    // with callers that already send them), but fall back to the
+    // job_opportunities row — which callers like CandidateOS have already
+    // populated via POST /api/jobs/sync keyed by this same body.jobId.
+    //
+    // This decouples the run-start contract from the workflow input shape:
+    // any consumer that has synced a job via /api/jobs/sync can kick off a
+    // run with just { jobId, candidateId, mode } and the API resolves the
+    // rest from Postgres. Avoids the silent "workflow never started" trap
+    // where the body guard fails quietly and the worker sits idle.
+    let resolvedJobUrl: string | undefined =
+      typeof body.jobUrl === "string" && body.jobUrl.length > 0
+        ? body.jobUrl
+        : undefined;
+    let resolvedAtsType: AtsType | undefined = body.atsType;
+    let workflowResolveWarning: string | undefined;
+    if (prismaClient && (!resolvedJobUrl || !resolvedAtsType)) {
+      try {
+        const jobRow = await prismaClient.jobOpportunity.findUnique({
+          where: { id: body.jobId },
+          select: { jobUrl: true, atsType: true },
+        });
+        if (jobRow) {
+          if (!resolvedJobUrl && jobRow.jobUrl) resolvedJobUrl = jobRow.jobUrl;
+          // Prisma-generated AtsType is structurally identical to
+          // @dejsol/core's AtsType but nominally distinct to TS; cast
+          // through unknown rather than relax the workflow-input type.
+          if (!resolvedAtsType && jobRow.atsType) {
+            resolvedAtsType = jobRow.atsType as unknown as AtsType;
+          }
+        } else {
+          workflowResolveWarning =
+            `job_opportunities row '${body.jobId}' not found — workflow cannot start without jobUrl + atsType`;
+          console.warn(`[api/runs] ${workflowResolveWarning}`, {
+            runId,
+            jobId: body.jobId,
+          });
+        }
+      } catch (lookupErr) {
+        // Non-fatal: treat as "could not resolve" and fall through. The
+        // guard below will simply skip the workflow start and the caller
+        // sees a bootstrapWarning-style message on the response.
+        const msg = lookupErr instanceof Error ? lookupErr.message : String(lookupErr);
+        workflowResolveWarning =
+          `job_opportunities lookup failed (${msg.split("\n").map(s => s.trim()).find(s => s.length > 0) ?? "(empty)"})`;
+        console.warn(`[api/runs] ${workflowResolveWarning}`, {
+          runId,
+          jobId: body.jobId,
+        });
+      }
+    }
+
     // Attempt to start the Temporal workflow when the client is wired and
-    // sufficient information is available (jobUrl + atsType).
-    if (temporalClient && body.jobUrl && body.atsType) {
+    // both inputs were resolved (from body or from job_opportunities).
+    let workflowStarted = false;
+    if (temporalClient && resolvedJobUrl && resolvedAtsType) {
       try {
         await temporalClient.startWorkflow(runId, {
           runId,
           jobId: body.jobId,
           candidateId: body.candidateId,
-          jobUrl: body.jobUrl,
+          jobUrl: resolvedJobUrl,
           mode: body.mode,
-          atsType: body.atsType,
+          atsType: resolvedAtsType,
           resumeFile: body.resumeFile ?? null,
         });
+        workflowStarted = true;
       } catch (workflowErr) {
         // Log but do not fail the API request — the run record is still
         // created so the caller has a runId to poll for status.
         console.error("[api/runs] Failed to start Temporal workflow:", workflowErr);
       }
+    } else if (temporalClient && !workflowResolveWarning) {
+      // Temporal client is wired but we have neither body values nor a
+      // job row to resolve from. Surface this explicitly so the caller
+      // doesn't silently treat a non-started workflow as "running."
+      workflowResolveWarning =
+        "workflow not started — jobUrl and atsType unavailable (body missing and no matching job_opportunities row)";
+      console.warn(`[api/runs] ${workflowResolveWarning}`, {
+        runId,
+        jobId: body.jobId,
+      });
     }
 
     const stub: ApplyRun = {
@@ -235,14 +301,18 @@ runsRouter.post("/", async (req, res, next) => {
       completedAt: null,
     };
 
-    const baseMessage =
-      temporalClient && body.jobUrl && body.atsType
-        ? "Run started and workflow triggered"
-        : "Run started successfully";
+    const baseMessage = workflowStarted
+      ? "Run started and workflow triggered"
+      : "Run started successfully";
+    const suffixes = [bootstrapWarning, workflowResolveWarning].filter(
+      (v): v is string => typeof v === "string" && v.length > 0,
+    );
     const response: ApiResponse<ApplyRun> = {
       success: true,
       data: stub,
-      message: bootstrapWarning ? `${baseMessage} (${bootstrapWarning})` : baseMessage,
+      message: suffixes.length > 0
+        ? `${baseMessage} (${suffixes.join("; ")})`
+        : baseMessage,
     };
     res.status(201).json(response);
   } catch (err) {
