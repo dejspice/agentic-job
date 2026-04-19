@@ -1,0 +1,19 @@
+{
+  "name": "@dejsol/worker",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "start": "node dist/start.js"
+  },
+  "dependencies": {
+    "@dejsol/core": "*",
+    "@dejsol/workflows": "*",
+    "@temporalio/worker": "^1.15.0",
+    "@temporalio/activity": "^1.15.0"
+  }
+}

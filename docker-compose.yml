@@ -36,7 +36,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=dejsol
       - POSTGRES_PWD=dejsol
@@ -53,6 +53,22 @@ services:
       - TEMPORAL_CORS_ORIGINS=http://localhost:3000
     ports:
       - "8080:8080"
+
+  # Temporal worker — polls the "apply-workflow" task queue and executes
+  # applyWorkflow + activities.  Build the repo first: npm run build
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - BRIGHT_DATA_AUTH=${BRIGHT_DATA_AUTH:-}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://dejsol:dejsol@postgres:5432/dejsol?schema=public}
+    restart: on-failure
 
 volumes:
   postgres_data:

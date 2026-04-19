@@ -52,7 +52,9 @@ import {
   type ArtifactStore,
 } from "@dejsol/browser-worker";
 import { ApplyStateMachine } from "@dejsol/state-machine";
-import type { StateContext, StateOutcome } from "@dejsol/state-machine";
+import type { StateContext, StateOutcome, ScreeningAnswerEntry } from "@dejsol/state-machine";
+import { adjudicateScreeningAnswers } from "./adjudicate-screening-answers.js";
+import { persistScreeningAnswers } from "./persist-screening-answers.js";
 
 // ---------------------------------------------------------------------------
 // State sequence
@@ -118,6 +120,18 @@ export interface GreenhouseHappyPathResult {
    * Each ref carries a `state` field so the workflow can rebuild byState.
    */
   artifacts: ArtifactReference[];
+  /**
+   * Structured screening answers produced during the run, post-adjudication.
+   * Entries whose source is "llm" or "combobox_fallback" carry an
+   * `adjudication` block describing whether they need human review.
+   * Populated by runGreenhouseHappyPathActivity after the browser run
+   * finishes. Undefined when no screening answers were generated.
+   */
+  screeningAnswers?: ScreeningAnswerEntry[];
+  /** Convenience flag: true iff any screeningAnswer needs human review or was rejected. */
+  answerReviewRequired?: boolean;
+  /** Count of screeningAnswers with recommendation in {human_review_required, reject}. */
+  answerReviewCount?: number;
   error?: string;
 }
 
@@ -323,11 +337,12 @@ export async function runGreenhouseHappyPathActivity(
 
   const browser = await chromium.launch({ headless: true });
 
+  let result: GreenhouseHappyPathResult;
   try {
     const page = await browser.newPage();
     const store = new InMemoryArtifactStore();
 
-    return await executeGreenhouseHappyPath({
+    result = await executeGreenhouseHappyPath({
       page,
       store,
       runId,
@@ -339,6 +354,53 @@ export async function runGreenhouseHappyPathActivity(
   } finally {
     await browser.close();
   }
+
+  // ── Adjudicate risky screening answers ─────────────────────────────
+  // Mirrors the harness's post-submit adjudication logic. Decorates each
+  // risky entry (source = "llm" | "combobox_fallback") with an
+  // `adjudication` block, and exposes `answerReviewRequired` so callers
+  // do not have to re-scan the array.
+  const rawAnswers = result.data?.screeningAnswers as
+    | ScreeningAnswerEntry[]
+    | undefined;
+  if (Array.isArray(rawAnswers) && rawAnswers.length > 0) {
+    const urlCompany = jobUrl.match(/greenhouse\.io\/([^/]+)/)?.[1] ?? undefined;
+    const runOutcomeLabel = result.outcome === "success" ? "SUBMITTED" : result.outcome;
+    try {
+      const adj = await adjudicateScreeningAnswers({
+        screeningAnswers: rawAnswers,
+        candidate: result.data?.candidate as Record<string, unknown> | undefined,
+        company: urlCompany,
+        jobTitle: result.data?.jobTitle as string | undefined,
+        runOutcome: runOutcomeLabel,
+      });
+      result.screeningAnswers = adj.screeningAnswers;
+      result.answerReviewRequired = adj.answerReviewRequired;
+      result.answerReviewCount = adj.answerReviewCount;
+    } catch (err) {
+      // Never fail the activity because adjudication failed.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[runGreenhouseHappyPathActivity] adjudicate error: ${msg}`);
+      result.screeningAnswers = rawAnswers;
+      result.answerReviewRequired = false;
+      result.answerReviewCount = 0;
+    }
+
+    // ── Persist screeningAnswers into apply_runs.answersJson ─────────
+    // Best-effort — the row may not exist yet in test/dev contexts.
+    try {
+      await persistScreeningAnswers(runId, {
+        screeningAnswers: result.screeningAnswers ?? [],
+        answerReviewRequired: result.answerReviewRequired ?? false,
+        answerReviewCount: result.answerReviewCount ?? 0,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[runGreenhouseHappyPathActivity] persist error: ${msg}`);
+    }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

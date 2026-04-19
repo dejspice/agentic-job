@@ -11,6 +11,7 @@
     { "path": "packages/state-machine" },
     { "path": "packages/accelerators" },
     { "path": "packages/workflows" },
-    { "path": "packages/api" }
+    { "path": "packages/api" },
+    { "path": "packages/worker" }
   ]
 }

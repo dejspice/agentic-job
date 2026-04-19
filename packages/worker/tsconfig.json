@@ -6,11 +6,9 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/__tests__", "src/demo", "src/harness", "node_modules", "dist"],
+  "exclude": ["node_modules", "dist"],
   "references": [
     { "path": "../core" },
-    { "path": "../browser-worker" },
-    { "path": "../intelligence" },
-    { "path": "../state-machine" }
+    { "path": "../workflows" }
   ]
 }

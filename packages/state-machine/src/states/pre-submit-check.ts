@@ -105,8 +105,13 @@ export const preSubmitCheckState: StateHandler = {
     );
 
     if (emptyLocation && context.execute) {
-      const city = (context.data.candidate as Record<string, string> | undefined)?.city;
-      const state = (context.data.candidate as Record<string, string> | undefined)?.state;
+      const candidateBag = context.data.candidate as Record<string, string> | undefined;
+      // Greenhouse field is #candidate-location; the harness / demo bags may
+      // populate either `candidate.city` (canonical) or `candidate.location`
+      // (historical alias). Accept either so the autocomplete retry runs
+      // regardless of which key the caller used.
+      const city = candidateBag?.city ?? candidateBag?.location;
+      const state = candidateBag?.state;
       const locValue = city && state ? `${city}, ${state}` : city ?? "";
 
       if (locValue) {

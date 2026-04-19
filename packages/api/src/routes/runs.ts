@@ -20,16 +20,67 @@ import type { KpiResponse } from "../types.js";
 export const runsRouter = Router();
 
 /**
+ * Recommendations on a ScreeningAnswerEntry.adjudication block that flag the
+ * entry as needing operator attention before its value can be trusted or
+ * banked.  Mirrors the values in @dejsol/intelligence's PolicyDecision.
+ */
+const REVIEW_RECOMMENDATIONS: ReadonlySet<string> = new Set([
+  "human_review_required",
+  "reject",
+]);
+
+/**
+ * Derive answer-review metrics from an answersJson blob.
+ *
+ * Accepts the loose shape persisted by runGreenhouseHappyPathActivity:
+ *   {
+ *     screeningAnswers: Array<{ adjudication?: { recommendation?: string } }>,
+ *     answerReviewRequired?: boolean,
+ *     answerReviewCount?: number,
+ *   }
+ *
+ * Prefers the persisted derived values when present; otherwise recomputes
+ * from the screeningAnswers array.  Returns zeros for any non-object input.
+ */
+function deriveAnswerReviewMetrics(
+  answersJson: unknown,
+): { answerReviewRequired: boolean; answerReviewCount: number } {
+  if (!answersJson || typeof answersJson !== "object") {
+    return { answerReviewRequired: false, answerReviewCount: 0 };
+  }
+  const bag = answersJson as Record<string, unknown>;
+  const persistedCount = typeof bag["answerReviewCount"] === "number" ? bag["answerReviewCount"] as number : undefined;
+  const persistedFlag = typeof bag["answerReviewRequired"] === "boolean" ? bag["answerReviewRequired"] as boolean : undefined;
+  if (persistedCount !== undefined && persistedFlag !== undefined) {
+    return { answerReviewRequired: persistedFlag, answerReviewCount: persistedCount };
+  }
+  const list = bag["screeningAnswers"];
+  if (!Array.isArray(list)) {
+    return { answerReviewRequired: false, answerReviewCount: 0 };
+  }
+  let answerReviewCount = 0;
+  for (const entry of list) {
+    const rec = (entry as { adjudication?: { recommendation?: string } } | null | undefined)
+      ?.adjudication?.recommendation;
+    if (typeof rec === "string" && REVIEW_RECOMMENDATIONS.has(rec)) answerReviewCount += 1;
+  }
+  return { answerReviewRequired: answerReviewCount > 0, answerReviewCount };
+}
+
+/**
  * Enrich a raw run record with computed fields for external consumers.
  * Does not mutate the input — returns a new object.
  */
-function withComputedFields<T extends { outcome?: string | null }>(
+function withComputedFields<T extends { outcome?: string | null; answersJson?: unknown }>(
   run: T,
-): T & { actionRequired: boolean } {
+): T & { actionRequired: boolean; answerReviewRequired: boolean; answerReviewCount: number } {
   const outcome = run.outcome ?? null;
+  const { answerReviewRequired, answerReviewCount } = deriveAnswerReviewMetrics(run.answersJson);
   const actionRequired =
-    outcome === "VERIFICATION_REQUIRED" || outcome === "ESCALATED";
-  return { ...run, actionRequired };
+    outcome === "VERIFICATION_REQUIRED" ||
+    outcome === "ESCALATED" ||
+    answerReviewRequired;
+  return { ...run, actionRequired, answerReviewRequired, answerReviewCount };
 }
 
 /**
@@ -69,26 +120,165 @@ runsRouter.post("/", async (req, res, next) => {
 
     const runId = crypto.randomUUID();
 
-    // Attempt to start the Temporal workflow when the client is wired and
-    // sufficient information is available (jobUrl + atsType).
     const temporalClient = req.app.locals.temporalClient as TemporalClientWrapper | undefined;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
 
-    if (temporalClient && body.jobUrl && body.atsType) {
+    // ── Bootstrap the apply_runs row BEFORE starting the workflow ─────────
+    // Downstream Temporal activities (e.g. persistScreeningAnswers) issue an
+    // update-by-id against apply_runs. Without this row they hit P2025 and
+    // silently drop the write, which is why answerReviewRequired /
+    // answerReviewCount never surface through GET /api/runs/:id/status in
+    // deployed runs. Must precede startWorkflow so the row is visible by the
+    // time the first activity executes.
+    //
+    // Best-effort: tests without a PrismaClient and callers supplying
+    // non-existent jobId/candidateId (FK violation → P2003) continue to work
+    // — we log and fall through rather than 500 the request.
+    let bootstrapWarning: string | undefined;
+    if (prismaClient) {
+      try {
+        await prismaClient.applyRun.create({
+          data: {
+            id: runId,
+            jobId: body.jobId,
+            candidateId: body.candidateId,
+            mode: body.mode,
+            resumeFile: body.resumeFile ?? null,
+          },
+        });
+      } catch (dbErr) {
+        // PrismaClientKnownRequestError carries .code / .meta. We avoid an
+        // `instanceof` import from @prisma/client (runtime-heavy) and inspect
+        // the fields defensively — anything that walks like a Prisma error
+        // gets its full code/meta surfaced; anything else falls back to the
+        // raw message.
+        const e = dbErr as {
+          name?: unknown;
+          code?: unknown;
+          meta?: unknown;
+          message?: unknown;
+        } | null;
+        const errName = typeof e?.name === "string" ? e.name : "Error";
+        const errCode = typeof e?.code === "string" ? e.code : undefined;
+        const errMeta = e && typeof e.meta === "object" ? e.meta : undefined;
+        const rawMsg =
+          dbErr instanceof Error
+            ? dbErr.message
+            : typeof e?.message === "string"
+              ? e.message
+              : String(dbErr);
+        // Prisma messages are multiline and often begin with a blank line —
+        // collapse to a single line and pick the first non-empty segment so
+        // the warning summary is never empty.
+        const msgLine =
+          rawMsg
+            .split("\n")
+            .map(s => s.trim())
+            .find(s => s.length > 0) ?? "(empty)";
+
+        bootstrapWarning = errCode
+          ? `apply_runs row not created (${errCode}: ${msgLine})`
+          : `apply_runs row not created (${msgLine})`;
+
+        console.warn(
+          `[api/runs] ${bootstrapWarning}`,
+          {
+            runId,
+            jobId: body.jobId,
+            candidateId: body.candidateId,
+            errName,
+            errCode,
+            errMeta,
+            errMessage: rawMsg,
+          },
+        );
+      }
+    }
+
+    // ── Resolve jobUrl + atsType for the workflow start ─────────────────
+    // The Temporal workflow needs jobUrl + atsType to navigate and detect
+    // fields. Prefer values supplied in the request body (backward-compat
+    // with callers that already send them), but fall back to the
+    // job_opportunities row — which callers like CandidateOS have already
+    // populated via POST /api/jobs/sync keyed by this same body.jobId.
+    //
+    // This decouples the run-start contract from the workflow input shape:
+    // any consumer that has synced a job via /api/jobs/sync can kick off a
+    // run with just { jobId, candidateId, mode } and the API resolves the
+    // rest from Postgres. Avoids the silent "workflow never started" trap
+    // where the body guard fails quietly and the worker sits idle.
+    let resolvedJobUrl: string | undefined =
+      typeof body.jobUrl === "string" && body.jobUrl.length > 0
+        ? body.jobUrl
+        : undefined;
+    let resolvedAtsType: AtsType | undefined = body.atsType;
+    let workflowResolveWarning: string | undefined;
+    if (prismaClient && (!resolvedJobUrl || !resolvedAtsType)) {
+      try {
+        const jobRow = await prismaClient.jobOpportunity.findUnique({
+          where: { id: body.jobId },
+          select: { jobUrl: true, atsType: true },
+        });
+        if (jobRow) {
+          if (!resolvedJobUrl && jobRow.jobUrl) resolvedJobUrl = jobRow.jobUrl;
+          // Prisma-generated AtsType is structurally identical to
+          // @dejsol/core's AtsType but nominally distinct to TS; cast
+          // through unknown rather than relax the workflow-input type.
+          if (!resolvedAtsType && jobRow.atsType) {
+            resolvedAtsType = jobRow.atsType as unknown as AtsType;
+          }
+        } else {
+          workflowResolveWarning =
+            `job_opportunities row '${body.jobId}' not found — workflow cannot start without jobUrl + atsType`;
+          console.warn(`[api/runs] ${workflowResolveWarning}`, {
+            runId,
+            jobId: body.jobId,
+          });
+        }
+      } catch (lookupErr) {
+        // Non-fatal: treat as "could not resolve" and fall through. The
+        // guard below will simply skip the workflow start and the caller
+        // sees a bootstrapWarning-style message on the response.
+        const msg = lookupErr instanceof Error ? lookupErr.message : String(lookupErr);
+        workflowResolveWarning =
+          `job_opportunities lookup failed (${msg.split("\n").map(s => s.trim()).find(s => s.length > 0) ?? "(empty)"})`;
+        console.warn(`[api/runs] ${workflowResolveWarning}`, {
+          runId,
+          jobId: body.jobId,
+        });
+      }
+    }
+
+    // Attempt to start the Temporal workflow when the client is wired and
+    // both inputs were resolved (from body or from job_opportunities).
+    let workflowStarted = false;
+    if (temporalClient && resolvedJobUrl && resolvedAtsType) {
       try {
         await temporalClient.startWorkflow(runId, {
           runId,
           jobId: body.jobId,
           candidateId: body.candidateId,
-          jobUrl: body.jobUrl,
+          jobUrl: resolvedJobUrl,
           mode: body.mode,
-          atsType: body.atsType,
+          atsType: resolvedAtsType,
           resumeFile: body.resumeFile ?? null,
         });
+        workflowStarted = true;
       } catch (workflowErr) {
         // Log but do not fail the API request — the run record is still
         // created so the caller has a runId to poll for status.
         console.error("[api/runs] Failed to start Temporal workflow:", workflowErr);
       }
+    } else if (temporalClient && !workflowResolveWarning) {
+      // Temporal client is wired but we have neither body values nor a
+      // job row to resolve from. Surface this explicitly so the caller
+      // doesn't silently treat a non-started workflow as "running."
+      workflowResolveWarning =
+        "workflow not started — jobUrl and atsType unavailable (body missing and no matching job_opportunities row)";
+      console.warn(`[api/runs] ${workflowResolveWarning}`, {
+        runId,
+        jobId: body.jobId,
+      });
     }
 
     const stub: ApplyRun = {
@@ -111,12 +301,18 @@ runsRouter.post("/", async (req, res, next) => {
       completedAt: null,
     };
 
+    const baseMessage = workflowStarted
+      ? "Run started and workflow triggered"
+      : "Run started successfully";
+    const suffixes = [bootstrapWarning, workflowResolveWarning].filter(
+      (v): v is string => typeof v === "string" && v.length > 0,
+    );
     const response: ApiResponse<ApplyRun> = {
       success: true,
       data: stub,
-      message: temporalClient && body.jobUrl && body.atsType
-        ? "Run started and workflow triggered"
-        : "Run started successfully",
+      message: suffixes.length > 0
+        ? `${baseMessage} (${suffixes.join("; ")})`
+        : baseMessage,
     };
     res.status(201).json(response);
   } catch (err) {
@@ -303,6 +499,22 @@ runsRouter.get("/:id/status", async (req, res, next) => {
   try {
     const { id } = req.params;
     const temporalClient = req.app.locals.temporalClient as TemporalClientWrapper | undefined;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    // Derive answer-review metrics from apply_runs.answers_json when available
+    // so consumers polling /status can see the flag without a second request.
+    let reviewMetrics = { answerReviewRequired: false, answerReviewCount: 0 };
+    if (prismaClient) {
+      try {
+        const row = await prismaClient.applyRun.findUnique({
+          where: { id },
+          select: { answersJson: true },
+        });
+        reviewMetrics = deriveAnswerReviewMetrics(row?.answersJson ?? null);
+      } catch {
+        // Non-fatal — /status degrades to metrics-less response.
+      }
+    }
 
     if (temporalClient) {
       try {
@@ -327,6 +539,8 @@ runsRouter.get("/:id/status", async (req, res, next) => {
           phase: status.phase ?? "initializing",
           statesCompleted: (status.statesCompleted ?? []) as import("@dejsol/core").StateName[],
           percentComplete: progress.percentComplete ?? 0,
+          answerReviewRequired: reviewMetrics.answerReviewRequired,
+          answerReviewCount: reviewMetrics.answerReviewCount,
         };
 
         return res.json({ success: true, data: liveStatus } satisfies ApiResponse<RunStatusResponse>);
@@ -342,6 +556,8 @@ runsRouter.get("/:id/status", async (req, res, next) => {
       phase: "initializing",
       statesCompleted: [],
       percentComplete: 0,
+      answerReviewRequired: reviewMetrics.answerReviewRequired,
+      answerReviewCount: reviewMetrics.answerReviewCount,
     };
 
     const response: ApiResponse<RunStatusResponse> = {
@@ -373,18 +589,36 @@ runsRouter.get("/:id/screening-answers", async (req, res, next) => {
         select: { answersJson: true, candidateId: true, outcome: true },
       });
       if (!run) throw ApiError.notFound("Run", id);
-      const response: ApiResponse<{ answersJson: unknown; candidateId: string; outcome: string | null }> = {
+      const metrics = deriveAnswerReviewMetrics(run.answersJson ?? null);
+      const response: ApiResponse<{
+        answersJson: unknown;
+        candidateId: string;
+        outcome: string | null;
+        answerReviewRequired: boolean;
+        answerReviewCount: number;
+      }> = {
         success: true,
         data: {
           answersJson: run.answersJson ?? {},
           candidateId: run.candidateId,
           outcome: run.outcome,
+          answerReviewRequired: metrics.answerReviewRequired,
+          answerReviewCount: metrics.answerReviewCount,
         },
       };
       return res.json(response);
     }
 
-    res.json({ success: true, data: { answersJson: {}, candidateId: "", outcome: null } });
+    res.json({
+      success: true,
+      data: {
+        answersJson: {},
+        candidateId: "",
+        outcome: null,
+        answerReviewRequired: false,
+        answerReviewCount: 0,
+      },
+    });
   } catch (err) {
     next(err);
   }

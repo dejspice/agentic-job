@@ -9,6 +9,7 @@ import { candidatesRouter } from "./routes/candidates.js";
 import { driveSyncRouter } from "./routes/drive-sync.js";
 import { acceleratorsRouter } from "./routes/accelerators.js";
 import { reviewRouter } from "./routes/review.js";
+import { candidatesSyncRouter, jobsSyncRouter } from "./routes/sync.js";
 import type { TemporalClientWrapper, TemporalConfig } from "./temporal-client.js";
 import type { PrismaClient } from "@prisma/client";
 
@@ -76,6 +77,11 @@ export function createApp(config: ServerConfig = {}): express.Application {
   // External-facing routes are gated by API key when AUTOPILOT_API_KEY is set.
   // Internal/operator routes (health, drive-sync, accelerators) are ungated.
   app.use("/api/runs", apiKeyAuth, runsRouter);
+  // Sync endpoints (CandidateOS → Autopilot parent-row upserts).
+  // Registered BEFORE /api/candidates and /api/jobs so the static /sync
+  // segment takes priority over the :id routes on those routers.
+  app.use("/api/candidates/sync", apiKeyAuth, candidatesSyncRouter);
+  app.use("/api/jobs/sync", apiKeyAuth, jobsSyncRouter);
   app.use("/api/candidates", apiKeyAuth, candidatesRouter);
   app.use("/api/jobs", apiKeyAuth, jobsRouter);
   app.use("/api/review", apiKeyAuth, reviewRouter);
@@ -135,8 +141,8 @@ export async function startServer(config: ServerConfig = {}) {
 
   const app = createApp({ ...config, temporalClient, prismaClient });
 
-  const server = app.listen(port, () => {
-    console.log(`[api] Dejsol API server listening on port ${port}`);
+  const server = app.listen(port, "::", () => {
+    console.log(`[api] Dejsol API server listening on [::]:${port}`);
   });
 
   return {

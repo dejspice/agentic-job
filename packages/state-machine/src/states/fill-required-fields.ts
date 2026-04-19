@@ -14,6 +14,13 @@ interface GreenhouseFieldDef {
   /** Dot-path into context.data for the candidate value. */
   dataKey: string;
   /**
+   * Optional alternate dot-path tried when `dataKey` resolves to an empty
+   * value. Used for fields whose canonical candidate-bag key differs from
+   * the Greenhouse field name (e.g. location-autocomplete reads
+   * `candidate.city` but the harness/demo populate `candidate.location`).
+   */
+  dataKeyFallback?: string;
+  /**
    * When false, absence of a value in the data bag does NOT count as a failure.
    * The field is silently skipped rather than added to failedFields.
    * Phone is optional on many Greenhouse boards.
@@ -107,6 +114,7 @@ const GREENHOUSE_FIELDS: readonly GreenhouseFieldDef[] = [
       'input[id*="location"]',
     ],
     dataKey: "candidate.city",
+    dataKeyFallback: "candidate.location",
     required: false,
     interaction: "location-autocomplete",
   },
@@ -382,7 +390,11 @@ export const fillRequiredFieldsState: StateHandler = {
     const failedFields: string[] = [];
 
     for (const field of GREENHOUSE_FIELDS) {
-      const value = resolveValue(context.data, field.dataKey);
+      const value =
+        resolveValue(context.data, field.dataKey) ??
+        (field.dataKeyFallback
+          ? resolveValue(context.data, field.dataKeyFallback)
+          : undefined);
 
       if (!value) {
         if (field.required) {

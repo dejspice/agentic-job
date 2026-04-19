@@ -1,0 +1,72 @@
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update -y && apt-get install -y openssl python3 make g++ && rm -rf /var/lib/apt/lists/*
+
+# Skip browser download during npm ci — Chromium is installed in the production stage.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Copy package files first for layer caching
+COPY package.json package-lock.json tsconfig.json tsconfig.base.json ./
+COPY packages/core/package.json packages/core/tsconfig.json ./packages/core/
+COPY packages/intelligence/package.json packages/intelligence/tsconfig.json ./packages/intelligence/
+COPY packages/browser-worker/package.json packages/browser-worker/tsconfig.json ./packages/browser-worker/
+COPY packages/state-machine/package.json packages/state-machine/tsconfig.json ./packages/state-machine/
+COPY packages/workflows/package.json packages/workflows/tsconfig.json ./packages/workflows/
+COPY packages/worker/package.json packages/worker/tsconfig.json ./packages/worker/
+
+# Install all deps (workspace root)
+RUN npm ci
+
+# Copy source for all packages the worker depends on
+COPY packages/core/src ./packages/core/src
+COPY packages/intelligence/src ./packages/intelligence/src
+COPY packages/browser-worker/src ./packages/browser-worker/src
+COPY packages/state-machine/src ./packages/state-machine/src
+COPY packages/workflows/src ./packages/workflows/src
+COPY packages/worker/src ./packages/worker/src
+
+# Build the full dependency chain
+RUN npx tsc -b packages/worker
+
+# --- Production image ---
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install Chromium dependencies for Playwright headless browser activities,
+# plus openssl for @temporalio/worker native bindings.
+RUN apt-get update -y && apt-get install -y \
+    openssl \
+    # Playwright/Chromium runtime dependencies
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libdbus-1-3 libxkbcommon0 libatspi2.0-0 libxcomposite1 libxdamage1 \
+    libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
+    libwayland-client0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/package.json /app/package-lock.json ./
+COPY --from=builder /app/packages/core/package.json ./packages/core/
+COPY --from=builder /app/packages/intelligence/package.json ./packages/intelligence/
+COPY --from=builder /app/packages/browser-worker/package.json ./packages/browser-worker/
+COPY --from=builder /app/packages/state-machine/package.json ./packages/state-machine/
+COPY --from=builder /app/packages/workflows/package.json ./packages/workflows/
+COPY --from=builder /app/packages/worker/package.json ./packages/worker/
+COPY --from=builder /app/node_modules ./node_modules/
+COPY --from=builder /app/packages/core/dist ./packages/core/dist/
+COPY --from=builder /app/packages/intelligence/dist ./packages/intelligence/dist/
+COPY --from=builder /app/packages/browser-worker/dist ./packages/browser-worker/dist/
+COPY --from=builder /app/packages/state-machine/dist ./packages/state-machine/dist/
+COPY --from=builder /app/packages/workflows/dist ./packages/workflows/dist/
+COPY --from=builder /app/packages/worker/dist ./packages/worker/dist/
+
+# Also copy workflow source — bundleWorkflowCode may need it at runtime
+COPY --from=builder /app/packages/workflows/src ./packages/workflows/src/
+
+# Install Playwright Chromium browser binary
+RUN npx playwright install chromium
+
+ENV NODE_ENV=production
+
+CMD ["node", "packages/worker/dist/start.js"]
