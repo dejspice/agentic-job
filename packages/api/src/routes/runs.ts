@@ -147,9 +147,51 @@ runsRouter.post("/", async (req, res, next) => {
           },
         });
       } catch (dbErr) {
-        const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
-        bootstrapWarning = `apply_runs row not created (${msg.split("\n")[0]})`;
-        console.warn(`[api/runs] ${bootstrapWarning}`);
+        // PrismaClientKnownRequestError carries .code / .meta. We avoid an
+        // `instanceof` import from @prisma/client (runtime-heavy) and inspect
+        // the fields defensively — anything that walks like a Prisma error
+        // gets its full code/meta surfaced; anything else falls back to the
+        // raw message.
+        const e = dbErr as {
+          name?: unknown;
+          code?: unknown;
+          meta?: unknown;
+          message?: unknown;
+        } | null;
+        const errName = typeof e?.name === "string" ? e.name : "Error";
+        const errCode = typeof e?.code === "string" ? e.code : undefined;
+        const errMeta = e && typeof e.meta === "object" ? e.meta : undefined;
+        const rawMsg =
+          dbErr instanceof Error
+            ? dbErr.message
+            : typeof e?.message === "string"
+              ? e.message
+              : String(dbErr);
+        // Prisma messages are multiline and often begin with a blank line —
+        // collapse to a single line and pick the first non-empty segment so
+        // the warning summary is never empty.
+        const msgLine =
+          rawMsg
+            .split("\n")
+            .map(s => s.trim())
+            .find(s => s.length > 0) ?? "(empty)";
+
+        bootstrapWarning = errCode
+          ? `apply_runs row not created (${errCode}: ${msgLine})`
+          : `apply_runs row not created (${msgLine})`;
+
+        console.warn(
+          `[api/runs] ${bootstrapWarning}`,
+          {
+            runId,
+            jobId: body.jobId,
+            candidateId: body.candidateId,
+            errName,
+            errCode,
+            errMeta,
+            errMessage: rawMsg,
+          },
+        );
       }
     }
 
