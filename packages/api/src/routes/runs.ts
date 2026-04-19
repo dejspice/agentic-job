@@ -120,10 +120,41 @@ runsRouter.post("/", async (req, res, next) => {
 
     const runId = crypto.randomUUID();
 
+    const temporalClient = req.app.locals.temporalClient as TemporalClientWrapper | undefined;
+    const prismaClient = req.app.locals.prismaClient as PrismaClient | undefined;
+
+    // ── Bootstrap the apply_runs row BEFORE starting the workflow ─────────
+    // Downstream Temporal activities (e.g. persistScreeningAnswers) issue an
+    // update-by-id against apply_runs. Without this row they hit P2025 and
+    // silently drop the write, which is why answerReviewRequired /
+    // answerReviewCount never surface through GET /api/runs/:id/status in
+    // deployed runs. Must precede startWorkflow so the row is visible by the
+    // time the first activity executes.
+    //
+    // Best-effort: tests without a PrismaClient and callers supplying
+    // non-existent jobId/candidateId (FK violation → P2003) continue to work
+    // — we log and fall through rather than 500 the request.
+    let bootstrapWarning: string | undefined;
+    if (prismaClient) {
+      try {
+        await prismaClient.applyRun.create({
+          data: {
+            id: runId,
+            jobId: body.jobId,
+            candidateId: body.candidateId,
+            mode: body.mode,
+            resumeFile: body.resumeFile ?? null,
+          },
+        });
+      } catch (dbErr) {
+        const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+        bootstrapWarning = `apply_runs row not created (${msg.split("\n")[0]})`;
+        console.warn(`[api/runs] ${bootstrapWarning}`);
+      }
+    }
+
     // Attempt to start the Temporal workflow when the client is wired and
     // sufficient information is available (jobUrl + atsType).
-    const temporalClient = req.app.locals.temporalClient as TemporalClientWrapper | undefined;
-
     if (temporalClient && body.jobUrl && body.atsType) {
       try {
         await temporalClient.startWorkflow(runId, {
@@ -162,12 +193,14 @@ runsRouter.post("/", async (req, res, next) => {
       completedAt: null,
     };
 
+    const baseMessage =
+      temporalClient && body.jobUrl && body.atsType
+        ? "Run started and workflow triggered"
+        : "Run started successfully";
     const response: ApiResponse<ApplyRun> = {
       success: true,
       data: stub,
-      message: temporalClient && body.jobUrl && body.atsType
-        ? "Run started and workflow triggered"
-        : "Run started successfully",
+      message: bootstrapWarning ? `${baseMessage} (${bootstrapWarning})` : baseMessage,
     };
     res.status(201).json(response);
   } catch (err) {
